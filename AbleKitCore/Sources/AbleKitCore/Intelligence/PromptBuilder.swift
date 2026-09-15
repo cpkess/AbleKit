@@ -56,19 +56,56 @@ public struct PromptBuilder: Sendable {
     // MARK: - Planning
 
     /// The standing instructions given to the planner once per session.
+    ///
+    /// The ordering here was arrived at by watching the on-device model fail. Given a list of
+    /// controls and a goal, its first instinct is to click one of them — so when the goal was
+    /// "ask Copilot about this", it reached for the nearest button instead. The fix is to make
+    /// *whether the interface is needed at all* the first question asked, before the controls are
+    /// ever considered. Launching an app, opening an address and asking another assistant are all
+    /// things done directly, and a planner that starts from the control list will not see that.
     public static let planningInstructions = """
         You decide the single next step for AbleKit, a macOS automation agent.
 
-        Rules, in order of importance:
-        1. Prefer the least risky action that makes progress. Never guess at a destructive step.
-        2. Act on a listed element by its id whenever one matches. Only use a screen position when \
-        no element fits.
-        3. Do exactly one step. You will see the result and be asked again.
-        4. If the goal is already met, complete. If it cannot be met, fail and say why.
-        5. If you need something only the user knows, ask them.
-        6. Never repeat a step the history shows already failed; try a different route instead.
+        Ask these in order, and stop at the first that applies:
+
+        1. Is the goal already achieved? Then complete. Never act merely to confirm what is \
+        already true.
+        2. Does the goal involve Copilot? Then use askCopilot, with the question in the text. \
+        AbleKit opens and operates Copilot itself: never open Copilot yourself, and never type the \
+        question into the app you are looking at.
+        3. Can the goal be reached without touching the interface? Launching an application or \
+        opening a web address are done directly. Do not click a control merely because one is listed.
+        4. Does it need something only the user knows? Then ask them.
+        5. Is it impossible? Then fail, and say why.
+        6. Otherwise, operate the interface: act on a listed control by its id, and use a screen \
+        position only when no listed control fits.
+
+        Always:
+        - Do exactly one step. You will see the result and be asked again.
+        - Fill in every field your step needs: typeText needs the text, askCopilot and askUser need \
+        the question, openApplication needs the name.
+        - Prefer the least risky action that makes progress. Never guess at a destructive step.
+        - Never repeat a step the history shows already failed; find a different route.
 
         Be brief. The rationale is one short sentence a person will read while waiting.
+
+        Worked examples.
+
+        Goal: "Make sure Mail is frontmost" when Mail is already frontmost.
+          kind: complete, text: "Mail is already frontmost."
+          Not a click. Nothing is needed, so nothing is done.
+
+        Goal: "Ask Copilot what the risks are here."
+          kind: askCopilot, text: "What are the risks for this programme?"
+          Not openApplication. AbleKit opens and operates Copilot itself.
+
+        Goal: "Open Safari."
+          kind: openApplication, applicationName: "Safari"
+          The name is always filled in.
+
+        Goal: "Change the status to Amber", with [e2] text field "Status" listed.
+          kind: clickElement, elementID: "e2"
+          A listed control is named by its id, never by its position.
         """
 
     /// The standing instructions given to the verifier.
@@ -187,7 +224,7 @@ public struct PromptBuilder: Sendable {
         }
 
         let shown = rank(elements).prefix(budget.maximumElements)
-        var lines = ["CONTROLS (act on these by id where you can):"]
+        var lines = ["CONTROLS (available if this step needs the interface; act on them by id):"]
         lines.append(contentsOf: shown.map(describe))
 
         if elements.count > shown.count {
