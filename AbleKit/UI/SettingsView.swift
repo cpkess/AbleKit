@@ -12,6 +12,9 @@ struct SettingsView: View {
             SkillsSettings().tabItem { Label("Skills", systemImage: "sparkles") }
             PrivacySettings().tabItem { Label("Privacy", systemImage: "lock.shield") }
             UpdateSettings().tabItem { Label("Updates", systemImage: "arrow.down.circle") }
+            if state.settings.showsDebugInterface {
+                DeveloperSettings().tabItem { Label("Developer", systemImage: "hammer") }
+            }
         }
         .environment(state)
         .frame(width: 520, height: 420)

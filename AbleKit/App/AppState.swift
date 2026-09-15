@@ -182,6 +182,30 @@ final class AppState {
         }
     }
 
+    // MARK: - Developer tools
+
+    /// Collects the desktop context as a task would see it, for the developer inspector.
+    ///
+    /// Uses the same collector the agent uses, so what the inspector shows is exactly what the
+    /// planner would have been given — an inspector with its own code path would be able to
+    /// disagree with reality, which is the one thing it must never do.
+    func inspectContext(includingScreen: Bool) async -> DesktopContext {
+        await collector.collect(options: includingScreen ? .full : .semantic)
+    }
+
+    /// Runs a single action through the real pipeline: validation, policy, routing, execution.
+    ///
+    /// Deliberately not a shortcut around `Executor`. A tester that bypassed the safety gate would
+    /// be testing something other than what AbleKit does.
+    func testExecute(_ action: DesktopAction, context: DesktopContext) async -> ExecutionReport {
+        await Executor(
+            router: makeRouter(),
+            policy: settings.actionPolicy,
+            interaction: interaction
+        )
+        .execute(action, context: context)
+    }
+
     /// The complete list of things AbleKit can do to this Mac, in preference order.
     private func makeRouter() -> CapabilityRouter {
         CapabilityRouter(capabilities: [

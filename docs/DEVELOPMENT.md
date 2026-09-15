@@ -89,14 +89,27 @@ as macOS is concerned, and Accessibility permission has to be granted again. Two
 The app tells you rather than failing quietly: a missing permission surfaces in the palette and in
 onboarding.
 
-## The debug panel
+## The developer tools
 
-Settings ▸ Automation ▸ "Show what AbleKit is working from" adds a panel to the task HUD showing
-the context, the chosen capability, any refinement the router applied, the verification result and
-timings.
+Turn on Settings ▸ Automation ▸ "Show what AbleKit is working from". That does two things.
 
-Computer-use behaviour is close to undebuggable from the outside — when an agent does something
-unexpected, the question is always *what did it think it was looking at?* This answers it.
+**In the task HUD**, a panel appears showing the context, the chosen capability, any refinement the
+router applied, the verification result and timings. Computer-use behaviour is close to
+undebuggable from the outside — when an agent does something unexpected, the question is always
+*what did it think it was looking at?* This answers it.
+
+**A Developer tab appears in Settings**, with two tools that do not require running a task:
+
+- *Capture Context* reads the frontmost app through the same collector the agent uses, so what it
+  shows cannot disagree with what the planner would have been given. Every control is listed with
+  its id, role, label, frame and available Accessibility actions.
+- *Highlight* and *Press* run a single action through the real pipeline — validation, safety policy,
+  routing, execution — and show the resulting report. It is not a shortcut around `Executor`; a
+  tester that bypassed the safety gate would be testing something other than what AbleKit does.
+
+This is the fastest way to find out whether a permission is really granted, whether an app exposes
+anything to Accessibility, and whether the coordinate math is landing where you expect. Note that
+capture waits a moment first, so that the Settings window is not itself the app being inspected.
 
 ## Style
 
