@@ -60,6 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Opens the palette with a Skill already chosen, so the user only has to fill in its values.
+    func showPalette(preselecting skill: Skill) {
+        state.pendingSkillLaunch = skill
+        showPalette()
+    }
+
     func showPalette() {
         // Warmed now rather than when the task starts: by the time the user has finished typing,
         // the model is usually already resident.

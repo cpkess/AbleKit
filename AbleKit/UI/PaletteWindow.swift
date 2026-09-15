@@ -42,17 +42,27 @@ final class PaletteWindowController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.animationBehavior = .utilityWindow
 
-        panel.contentView = NSHostingView(
-            rootView: CommandPaletteView(
-                onSubmit: { [weak delegate] goal in
-                    delegate?.hidePalette()
+        let root = CommandPaletteView(
+            onSubmit: { [weak delegate] request in
+                delegate?.hidePalette()
+                switch request {
+                case .goal(let goal):
                     state.start(goal: goal)
-                    delegate?.showHUD()
-                },
-                onDismiss: { [weak delegate] in delegate?.hidePalette() }
-            )
-            .environment(state)
+                case .skill(let skill, let parameters):
+                    state.run(skill, parameters: parameters)
+                }
+                delegate?.showHUD()
+            },
+            onDismiss: { [weak delegate] in delegate?.hidePalette() }
         )
+        .environment(state)
+
+        // A hosting controller rather than a hosting view, so the panel resizes to fit its content.
+        // The palette grows when a Skill asks for values, and a fixed-height panel would clip the
+        // form it is showing.
+        let hosting = NSHostingController(rootView: root)
+        hosting.sizingOptions = [.preferredContentSize]
+        panel.contentViewController = hosting
     }
 
     func show() {

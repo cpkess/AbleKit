@@ -30,8 +30,9 @@ capable — reliability over breadth.
   for later steps to act on. Only text is sent, and the exact text is shown before it leaves.
 - **Skills** — saved, parameterised procedures expressed as intentions rather than recorded
   coordinates, stored as readable JSON.
-- **Interface** — menu-bar utility with a global shortcut, a Spotlight-style palette, a task HUD
-  with Pause and Stop always available, a target overlay, and permission onboarding.
+- **Interface** — menu-bar utility with a recordable global shortcut, a Spotlight-style palette
+  that collects a Skill's parameters before running it, a task HUD with Pause and Stop always
+  available, a target overlay, and permission onboarding.
 - **Developer panel** — the context, capability, refinement and verification behind each step.
 - **Distribution** — Sparkle updates with EdDSA verification, a signed and notarised DMG, and a
   tag-triggered GitHub Actions release pipeline.

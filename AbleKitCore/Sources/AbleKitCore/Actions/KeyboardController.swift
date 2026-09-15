@@ -60,15 +60,23 @@ public struct KeyboardController: Sendable {
 /// Named keys (Return, Tab, the arrows) have fixed codes that never move. Characters do move:
 /// the physical key that produces "z" is in a different place on a French layout than a US one, and
 /// hard-coding US codes would make Command-Z do the wrong thing for anyone not typing in English.
-struct KeyboardLayout: Sendable {
+public struct KeyboardLayout: Sendable {
     private let characterToKeyCode: [String: CGKeyCode]
 
     /// The layout the user is typing on right now.
     ///
     /// Read fresh each time rather than cached: input sources can be switched at any moment, and a
     /// stale map would silently send the wrong key.
-    static var current: KeyboardLayout {
+    public static var current: KeyboardLayout {
         KeyboardLayout(characterToKeyCode: Self.buildCharacterMap())
+    }
+
+    /// The character a physical key produces, for showing a shortcut back to the user.
+    ///
+    /// Read from the live layout for the same reason as the forward direction: displaying "Z" for a
+    /// key that types "W" would be its own small lie.
+    public func character(forKeyCode keyCode: CGKeyCode) -> String? {
+        characterToKeyCode.first { $0.value == keyCode }?.key
     }
 
     func keyCode(for key: Key) -> CGKeyCode? {

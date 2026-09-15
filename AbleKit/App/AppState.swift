@@ -27,6 +27,10 @@ final class AppState {
     /// Set when the chosen shortcut is already taken by another application, so Settings can say
     /// so rather than leaving the user with a key combination that silently does nothing.
     var shortcutRegistrationFailed = false
+    /// A Skill chosen from the menu bar that still needs values before it can run.
+    ///
+    /// The menu cannot collect them, so it hands the Skill to the palette, which can.
+    var pendingSkillLaunch: Skill?
 
     private let intelligence: AppleIntelligenceProvider
     private let collector: ContextCollector

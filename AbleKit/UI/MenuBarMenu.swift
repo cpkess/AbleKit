@@ -25,10 +25,19 @@ struct MenuBarMenu: View {
                 .keyboardShortcut(.space, modifiers: [.control, .option])
         }
 
-        if !state.skills.isEmpty {
+        if !state.skills.isEmpty, !state.isRunning {
             Menu("Skills") {
                 ForEach(state.skills) { skill in
-                    Button(skill.name) { appDelegate?.showPalette() }
+                    Button(skill.name) {
+                        if skill.parameters.isEmpty {
+                            // Nothing to ask for, so run it straight away.
+                            state.run(skill, parameters: [:])
+                            appDelegate?.showHUD()
+                        } else {
+                            // It needs values first; the palette is where those are collected.
+                            appDelegate?.showPalette(preselecting: skill)
+                        }
+                    }
                 }
             }
         }

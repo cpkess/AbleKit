@@ -28,13 +28,14 @@ private struct GeneralSettings: View {
             Toggle("Show the menu bar icon", isOn: $settings.showsMenuBarIcon)
 
             LabeledContent("Shortcut") {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(settings.shortcut.displayString)
-                        .font(.body.monospaced())
+                VStack(alignment: .trailing, spacing: 4) {
+                    ShortcutRecorder(shortcut: $settings.shortcut) {
+                        (NSApplication.shared.delegate as? AppDelegate)?.registerShortcut()
+                    }
                     if state.shortcutRegistrationFailed {
                         // Said plainly, because a shortcut that another app has already claimed
                         // simply does nothing, with no other clue as to why.
-                        Text("Another app is already using this. AbleKit's shortcut will not work.")
+                        Text("Another app is already using this.")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }

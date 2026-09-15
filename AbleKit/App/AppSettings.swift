@@ -1,4 +1,5 @@
 import AbleKitCore
+import CoreGraphics
 import Foundation
 import SwiftUI
 
@@ -170,16 +171,24 @@ public struct KeyboardShortcutSetting: Equatable, Sendable {
         return parts.joined()
     }
 
+    /// The name of a key, read from the layout the user is actually typing on.
+    ///
+    /// Named keys come first because they have fixed codes; everything else is asked of the live
+    /// keyboard layout, so a shortcut reads correctly on a non-US keyboard.
     static func name(for keyCode: UInt32) -> String {
         switch keyCode {
-        case 49: "Space"
-        case 36: "Return"
-        case 48: "Tab"
-        case 0: "A"
-        case 1: "S"
-        case 8: "C"
-        case 46: "M"
-        default: "Key \(keyCode)"
+        case 49: return "Space"
+        case 36: return "Return"
+        case 48: return "Tab"
+        case 53: return "Escape"
+        case 51: return "Delete"
+        case 123: return "\u{2190}"
+        case 124: return "\u{2192}"
+        case 125: return "\u{2193}"
+        case 126: return "\u{2191}"
+        default:
+            return KeyboardLayout.current.character(forKeyCode: CGKeyCode(keyCode))?.uppercased()
+                ?? "Key \(keyCode)"
         }
     }
 
