@@ -1,0 +1,187 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 0.1.0"
+        required: true
+      dry_run:
+        description: "Build and sign but do not publish a release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
+
+    env:
+      SIGNING_IDENTITY: ${{ secrets.SIGNING_IDENTITY }}
+      AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+      AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
+      SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # The build number must increase for Sparkle to see an update at all, so it is derived
+          # from the commit count rather than trusted to be bumped by hand.
+          echo "build=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Building AbleKit $VERSION"
+
+      - name: Check the release credentials are present
+        run: |
+          # Failing here, before a twenty-minute build, is much kinder than failing at the
+          # notarization step with a cryptic error.
+          missing=()
+          [[ -n "${{ secrets.SIGNING_IDENTITY }}" ]] || missing+=(SIGNING_IDENTITY)
+          [[ -n "${{ secrets.MACOS_CERTIFICATE }}" ]] || missing+=(MACOS_CERTIFICATE)
+          [[ -n "${{ secrets.MACOS_CERTIFICATE_PASSWORD }}" ]] || missing+=(MACOS_CERTIFICATE_PASSWORD)
+          [[ -n "${{ secrets.AC_API_KEY }}" ]] || missing+=(AC_API_KEY)
+          [[ -n "${{ secrets.AC_API_KEY_ID }}" ]] || missing+=(AC_API_KEY_ID)
+          [[ -n "${{ secrets.AC_API_ISSUER_ID }}" ]] || missing+=(AC_API_ISSUER_ID)
+          [[ -n "${{ secrets.SPARKLE_PRIVATE_KEY }}" ]] || missing+=(SPARKLE_PRIVATE_KEY)
+          if (( ${#missing[@]} )); then
+            echo "::error::Missing repository secrets: ${missing[*]}. See docs/RELEASING.md."
+            exit 1
+          fi
+
+      - name: Test
+        run: swift test --package-path AbleKitCore
+
+      - name: Import the signing certificate
+        run: |
+          # A throwaway keychain, created per run and never unlocked for longer than the build.
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          echo "${{ secrets.MACOS_CERTIFICATE }}" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" \
+            -k "$KEYCHAIN" \
+            -P "${{ secrets.MACOS_CERTIFICATE_PASSWORD }}" \
+            -T /usr/bin/codesign
+          rm -f "$CERT_PATH"
+
+          # Without this, codesign blocks on a GUI prompt that no one can answer on a runner.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+
+      - name: Write the App Store Connect key
+        run: |
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          echo "${{ secrets.AC_API_KEY }}" | base64 --decode > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "AC_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Archive
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project AbleKit.xcodeproj \
+            -scheme AbleKit \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$RUNNER_TEMP/AbleKit.xcarchive" \
+            -clonedSourcePackagesDirPath .build/spm \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
+            CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM }}"
+
+      - name: Export the app
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/AbleKit.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist Configs/ExportOptions.plist \
+            -allowProvisioningUpdates
+
+      - name: Sign and notarize the app
+        run: |
+          ./scripts/sign-and-notarize.sh \
+            "$RUNNER_TEMP/export/AbleKit.app" \
+            Configs/AbleKit.entitlements
+
+      - name: Build the DMG
+        run: |
+          ./scripts/build-dmg.sh \
+            "$RUNNER_TEMP/export/AbleKit.app" \
+            "${{ steps.version.outputs.version }}" \
+            dist
+
+      - name: Sign and notarize the DMG
+        run: |
+          # The DMG is notarised in its own right so that Gatekeeper is satisfied by the download
+          # itself, not only by the app once it has been dragged out.
+          ./scripts/sign-and-notarize.sh "dist/AbleKit-${{ steps.version.outputs.version }}.dmg"
+
+      - name: Write the release notes
+        id: notes
+        run: |
+          NOTES_FILE="$RUNNER_TEMP/notes.txt"
+          if [[ -f CHANGELOG.md ]]; then
+            # The section for this version, up to the next heading.
+            awk -v version="${{ steps.version.outputs.version }}" '
+              $0 ~ "^## \\[?" version { found = 1; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md | sed '/^[[:space:]]*$/d' > "$NOTES_FILE"
+          fi
+          if [[ ! -s "$NOTES_FILE" ]]; then
+            echo "AbleKit ${{ steps.version.outputs.version }}." > "$NOTES_FILE"
+          fi
+          echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Generate the Sparkle appcast
+        run: |
+          ./scripts/generate-appcast.sh \
+            "dist/AbleKit-${{ steps.version.outputs.version }}.dmg" \
+            "${{ steps.version.outputs.version }}" \
+            "${{ steps.version.outputs.build }}" \
+            "${{ steps.notes.outputs.path }}" \
+            dist/appcast.xml
+        env:
+          SPM_CACHE_DIR: .build/spm
+
+      - name: Upload the build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AbleKit-${{ steps.version.outputs.version }}
+          path: dist/
+
+      - name: Publish the release
+        if: github.event_name == 'push' || inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "AbleKit ${{ steps.version.outputs.version }}" \
+            --notes-file "${{ steps.notes.outputs.path }}" \
+            "dist/AbleKit-${{ steps.version.outputs.version }}.dmg" \
+            "dist/appcast.xml"
+
+      - name: Clean up credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" 2>/dev/null || true

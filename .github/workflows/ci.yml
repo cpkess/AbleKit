@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # AbleKit needs the macOS 26 SDK for the Foundation Models framework. Override with the
+    # MACOS_RUNNER repository variable if a different image (or a self-hosted runner) is needed.
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          xcrun --sdk macosx --show-sdk-version
+
+      # The core package holds everything testable. It builds and tests without an app host, a
+      # window server, or any TCC permission, which is what makes it runnable on a CI box at all.
+      - name: Test AbleKitCore
+        run: swift test --package-path AbleKitCore
+
+      - name: Resolve packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project AbleKit.xcodeproj \
+            -clonedSourcePackagesDirPath .build/spm
+
+      - name: Build the app
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project AbleKit.xcodeproj \
+            -scheme AbleKit \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -clonedSourcePackagesDirPath .build/spm \
+            -derivedDataPath .build/dd \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Check for compiler warnings
+        run: |
+          # The brief asks for zero or near-zero warnings; this keeps that honest over time
+          # rather than relying on anyone remembering to look.
+          if swift build --package-path AbleKitCore 2>&1 | grep -E "warning:" | grep -v "Source files for target"; then
+            echo "::warning::The core package produced compiler warnings."
+          fi

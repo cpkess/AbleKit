@@ -1,0 +1,123 @@
+# Development
+
+## Requirements
+
+- Apple Silicon Mac, macOS 26 or later
+- Xcode 26 or later
+
+## Getting started
+
+```bash
+git clone https://github.com/cpkess/AbleKit.git
+cd AbleKit
+
+# The core logic. No app host, no permissions, no window server.
+swift test --package-path AbleKitCore
+
+# The app.
+open AbleKit.xcodeproj
+```
+
+From the command line:
+
+```bash
+xcodebuild -resolvePackageDependencies -project AbleKit.xcodeproj -clonedSourcePackagesDirPath .build/spm
+
+xcodebuild build \
+  -project AbleKit.xcodeproj -scheme AbleKit -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -clonedSourcePackagesDirPath .build/spm -derivedDataPath .build/dd
+```
+
+## Where things live
+
+```
+AbleKitCore/Sources/AbleKitCore/
+  Shared/         Geometry — the one place coordinates are converted
+  Actions/        DesktopAction, validation, mouse and keyboard controllers
+  Context/        DesktopContext, the Accessibility snapshot, the collector
+  Intelligence/   IntelligenceProvider, prompt building, the Apple Intelligence provider
+  Agent/          AgentSession, the router, the verifier, loop detection
+  Capabilities/   Native, Accessibility, Visual, Bridges
+  Safety/         Classification, policy, permissions
+  Skills/         Model, runner, store
+
+AbleKit/
+  App/            Entry point, delegate, state, settings, shortcut
+  UI/             Palette, HUD, onboarding, settings, overlay, debug panel
+  Updates/        Sparkle
+
+Configs/          Info.plist, entitlements, export options
+scripts/          DMG, signing, notarization, Sparkle keys and appcast
+```
+
+## Adding a source file
+
+The app target uses a folder-synchronized group, so **a new file in `AbleKit/` is picked up
+automatically** — `project.pbxproj` never needs editing. The same is true of the package.
+
+## Working on the agent without a desktop
+
+The most useful thing in the test suite is the set of simulated runs in `AgentSessionTests`. They
+drive the whole loop with a scripted planner and a scripted desktop, so every termination path —
+step limit, repeated action, frozen screen, declined confirmation, blocked action, unanswered
+question — is exercised without a mouse moving.
+
+The test doubles are in `TestDoubles.swift`:
+
+| Double | Stands in for |
+|---|---|
+| `ScriptedIntelligence` | The planner. Returns a fixed sequence, or a closure for endless distinct steps |
+| `ScriptedCollector` | The desktop. Varies its state by default, because a frozen screen legitimately reads as failure |
+| `RecordingCapability` | Anything that touches the machine. Records instead of doing |
+| `ScriptedUser` | Someone answering confirmations |
+
+A note worth knowing: `ScriptedCollector` returns a slightly different window title each time unless
+you pass `varying: false`. That is not a quirk — `Verifier` treats an entirely unchanged screen as
+evidence that an action did nothing, so a double that returned a frozen desktop would make every
+step fail verification. Opt into `varying: false` only in tests that are actually about being stuck.
+
+## Permissions while developing
+
+TCC grants are tied to the code signature, so a rebuilt debug app is frequently a *new* app as far
+as macOS is concerned, and Accessibility permission has to be granted again. Two things help:
+
+- Grant permission to the built app in `DerivedData` once and avoid cleaning.
+- If AbleKit stops being able to operate anything, check System Settings ▸ Privacy & Security ▸
+  Accessibility for a stale entry and remove it before re-adding.
+
+The app tells you rather than failing quietly: a missing permission surfaces in the palette and in
+onboarding.
+
+## The debug panel
+
+Settings ▸ Automation ▸ "Show what AbleKit is working from" adds a panel to the task HUD showing
+the context, the chosen capability, any refinement the router applied, the verification result and
+timings.
+
+Computer-use behaviour is close to undebuggable from the outside — when an agent does something
+unexpected, the question is always *what did it think it was looking at?* This answers it.
+
+## Style
+
+- Swift 6 language mode, strict concurrency, zero warnings.
+- Design services behind protocols so they can be substituted in tests.
+- Never fake an Apple API that does not exist. If something cannot be done because of an SDK,
+  entitlement or platform limit, keep the abstraction, document the limitation, and build
+  everything around it that does work.
+- Inspect the SDK when unsure:
+  ```bash
+  SDK=$(xcrun --sdk macosx --show-sdk-path)
+  grep -n "SystemLanguageModel" "$SDK/System/Library/Frameworks/FoundationModels.framework/Versions/A/Modules/FoundationModels.swiftmodule/arm64e-apple-macos.swiftinterface"
+  ```
+
+## Tests
+
+```bash
+swift test --package-path AbleKitCore
+swift test --package-path AbleKitCore --filter GeometryTests
+```
+
+Coverage worth maintaining: the agent state machine, capability selection and refinement, action
+validation, the safety policy, retries and cancellation, loop detection, coordinate conversion, the
+Copilot bridge's state transitions, and verification logic.

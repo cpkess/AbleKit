@@ -137,28 +137,31 @@ public struct AppleIntelligenceProvider: IntelligenceProvider {
         }
     }
 
+    /// Maps a Foundation Models failure onto AbleKit's own error type.
+    ///
+    /// `LanguageModelSession.GenerationError` is used rather than the newer `LanguageModelError`
+    /// because it exists in the macOS 26 SDK as well as 27, and AbleKit's deployment target is 26 —
+    /// referencing the newer type would make the project impossible to build with anything but the
+    /// very latest Xcode, including on CI runners. The older type is deprecated as of macOS 27,
+    /// which produces no warning here because AbleKit deploys to 26.
     private static func translate(_ error: any Error) -> IntelligenceError {
-        if #available(macOS 27.0, *) {
-            if let modelError = error as? LanguageModelError {
-                switch modelError {
-                case .contextSizeExceeded:
-                    return .contextTooLarge
-                case .guardrailViolation:
-                    return .underlying(
-                        "Apple Intelligence declined to answer about what is on screen."
-                    )
-                case .refusal:
-                    return .underlying("Apple Intelligence declined this request.")
-                case .timeout:
-                    return .underlying("Apple Intelligence took too long to answer.")
-                case .rateLimited:
-                    return .underlying("Apple Intelligence is busy. Try again in a moment.")
-                default:
-                    return .underlying(modelError.localizedDescription)
-                }
-            }
+        guard let generationError = error as? LanguageModelSession.GenerationError else {
+            return .underlying(error.localizedDescription)
         }
-        return .underlying(error.localizedDescription)
+        switch generationError {
+        case .exceededContextWindowSize:
+            return .contextTooLarge
+        case .guardrailViolation:
+            return .underlying("Apple Intelligence declined to answer about what is on screen.")
+        case .unsupportedLanguageOrLocale:
+            return .underlying("Apple Intelligence does not support this language yet.")
+        case .assetsUnavailable:
+            return .underlying("Apple Intelligence is still preparing its model.")
+        case .rateLimited:
+            return .underlying("Apple Intelligence is busy. Try again in a moment.")
+        default:
+            return .underlying(generationError.localizedDescription)
+        }
     }
 
     private static func description(

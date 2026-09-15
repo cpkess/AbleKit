@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Distributed outside the Mac App Store, directly from GitHub Releases. -->
+	<key>method</key>
+	<string>developer-id</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<!-- Notarization is handled by scripts/sign-and-notarize.sh so that the DMG is notarised too;
+	     xcodebuild would only notarise the app. -->
+	<key>destination</key>
+	<string>export</string>
+</dict>
+</plist>
