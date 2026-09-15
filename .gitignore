@@ -24,3 +24,6 @@ dist/
 *.p8
 .env
 ExportOptions.local.plist
+
+# Resolved package checkouts from xcodebuild
+AbleKit.xcodeproj/project.xcworkspace/

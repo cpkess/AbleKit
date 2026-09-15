@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  AbleKit is deliberately NOT sandboxed.
+
+	  Its entire purpose is to observe and operate other applications on the user's behalf, which
+	  the App Sandbox exists to prevent. Claiming the sandbox while requesting the exceptions that
+	  would undo it would be worse than not claiming it: it would imply a containment that is not
+	  there. Instead AbleKit runs with the Hardened Runtime, is signed and notarised, and is
+	  constrained by the two TCC permissions the user grants explicitly and can revoke at any time.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+
+	<!-- Required so the Hardened Runtime permits the JIT-free dynamic libraries Sparkle loads. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

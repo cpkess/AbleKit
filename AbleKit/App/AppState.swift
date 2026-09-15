@@ -1,0 +1,203 @@
+import AbleKitCore
+import AppKit
+import Foundation
+import SwiftUI
+import os
+
+/// Everything the app is, in one place.
+///
+/// `AppState` is the only object that knows how AbleKit's pieces fit together. Assembling the
+/// capability list here — rather than letting each part reach for what it needs — means the set of
+/// things AbleKit can do to a Mac is a single readable list, which is a property worth having for
+/// software that operates someone's desktop on their behalf.
+@MainActor
+@Observable
+final class AppState {
+
+    let settings: AppSettings
+    let permissions: PermissionManager
+    let interaction: InteractionCoordinator
+    let updates: UpdateController
+
+    /// The running task, if there is one.
+    private(set) var session: AgentSession?
+    private(set) var skills: [Skill] = []
+    /// Set when the local model is unusable, so the palette can say so instead of failing per task.
+    private(set) var intelligenceAvailability: IntelligenceAvailability = .available
+    /// Set when the chosen shortcut is already taken by another application, so Settings can say
+    /// so rather than leaving the user with a key combination that silently does nothing.
+    var shortcutRegistrationFailed = false
+
+    private let intelligence: AppleIntelligenceProvider
+    private let collector: ContextCollector
+    private let skillStore: SkillStore
+    private let skillRunner = SkillRunner()
+    private let overlay: OverlayController
+    private var runTask: Task<Void, Never>?
+    private let log = Logger(subsystem: "com.ablekit.AbleKit", category: "Agent")
+
+    init(
+        settings: AppSettings = AppSettings(),
+        permissions: PermissionManager = PermissionManager(),
+        skillStore: SkillStore = SkillStore()
+    ) {
+        self.settings = settings
+        self.permissions = permissions
+        self.skillStore = skillStore
+        self.interaction = InteractionCoordinator()
+        self.intelligence = AppleIntelligenceProvider()
+        self.collector = ContextCollector()
+        self.updates = UpdateController()
+        self.overlay = OverlayController()
+
+        reloadSkills()
+    }
+
+    // MARK: - Lifecycle
+
+    func refreshEnvironment() async {
+        permissions.refresh()
+        intelligenceAvailability = await intelligence.availability
+    }
+
+    /// Warms the model so the first step of a task does not pay the load cost.
+    func prewarmIntelligence() {
+        intelligence.prewarm()
+    }
+
+    func reloadSkills() {
+        skills = (try? skillStore.load()) ?? []
+        // First run: seed the worked examples so the Skills list is not an empty box.
+        if skills.isEmpty, !UserDefaults.standard.bool(forKey: "skills.seeded") {
+            for sample in Skill.samples { try? skillStore.save(sample) }
+            UserDefaults.standard.set(true, forKey: "skills.seeded")
+            skills = (try? skillStore.load()) ?? []
+        }
+    }
+
+    func save(_ skill: Skill) {
+        try? skillStore.save(skill)
+        reloadSkills()
+    }
+
+    func deleteSkill(_ id: UUID) {
+        try? skillStore.delete(id)
+        reloadSkills()
+    }
+
+    // MARK: - Running a task
+
+    var isRunning: Bool {
+        session?.phase.isRunning ?? false
+    }
+
+    /// Whether a task can be started at all, and why not when it cannot.
+    var blockingReason: String? {
+        if case .unavailable(let reason, let suggestion) = intelligenceAvailability {
+            return [reason, suggestion].compactMap { $0 }.joined(separator: " ")
+        }
+        if !permissions.isGranted(.accessibility) {
+            return "AbleKit needs Accessibility permission before it can operate anything."
+        }
+        return nil
+    }
+
+    func start(goal: String) {
+        let trimmed = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, blockingReason == nil else { return }
+
+        cancel()
+        settings.rememberGoal(trimmed)
+
+        let session = AgentSession(
+            goal: trimmed,
+            collector: collector,
+            intelligence: intelligence,
+            executor: Executor(
+                router: makeRouter(),
+                policy: settings.actionPolicy,
+                interaction: interaction
+            ),
+            verifier: Verifier(intelligence: intelligence),
+            interaction: interaction,
+            limits: settings.taskLimits
+        )
+        self.session = session
+
+        runTask = Task { [weak self] in
+            await session.run()
+            self?.finish(session)
+        }
+        observeOverlay(for: session)
+    }
+
+    func run(_ skill: Skill, parameters: [String: String]) {
+        do {
+            start(goal: try skillRunner.goal(for: skill, parameters: parameters))
+        } catch {
+            log.error("Could not run the skill: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    func pause() { session?.pause() }
+    func resume() { session?.resume() }
+
+    func cancel() {
+        session?.cancel()
+        runTask?.cancel()
+        runTask = nil
+        interaction.dismiss()
+        overlay.hide()
+    }
+
+    /// Dismisses a finished task's HUD.
+    func dismissFinishedTask() {
+        guard session?.phase.isTerminal == true else { return }
+        session = nil
+    }
+
+    private func finish(_ session: AgentSession) {
+        overlay.hide()
+        guard let termination = session.termination else { return }
+        log.notice("Task finished: \(termination.userMessage, privacy: .public)")
+    }
+
+    /// Keeps the on-screen highlight following whatever the agent is about to touch.
+    private func observeOverlay(for session: AgentSession) {
+        Task { [weak self, weak session] in
+            while let session, !session.phase.isTerminal {
+                guard let self else { return }
+                if let frame = session.pendingAction?.pointerTarget?.highlightFrame {
+                    overlay.show(frame)
+                } else {
+                    overlay.hide()
+                }
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+            self?.overlay.hide()
+        }
+    }
+
+    /// The complete list of things AbleKit can do to this Mac, in preference order.
+    private func makeRouter() -> CapabilityRouter {
+        CapabilityRouter(capabilities: [
+            NativeCapability(),
+            AccessibilityCapability(),
+            VisualInteractionCapability(),
+            AIBridgeCapability(bridges: [CopilotBridge(surface: AccessibilityCopilotSurface())]),
+            ControlCapability(interaction: interaction),
+        ])
+    }
+}
+
+extension PointerTarget {
+    /// The rectangle the overlay should draw around, in canonical screen coordinates.
+    var highlightFrame: CGRect? {
+        switch self {
+        case .element(let element):
+            element.frame.width > 0 ? element.frame : nil
+        case .point(let point):
+            CGRect(x: point.x - 18, y: point.y - 18, width: 36, height: 36)
+        }
+    }
+}
