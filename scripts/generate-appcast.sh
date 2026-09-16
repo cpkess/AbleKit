@@ -20,21 +20,29 @@ BUILD="${3:?}"
 NOTES_FILE="${4:?}"
 OUTPUT="${5:-dist/appcast.xml}"
 
-: "${SPARKLE_PRIVATE_KEY:?SPARKLE_PRIVATE_KEY is not set}"
-
 SIGN_UPDATE="$(find_sparkle_tool sign_update)"
 
-# The key is handed over in a file rather than on the command line. Arguments are visible to every
-# process on the machine via ps, which on a shared CI runner is a real exposure — and Sparkle now
-# refuses the modern key format passed that way in any case.
-KEY_FILE="$(mktemp)"
-chmod 600 "$KEY_FILE"
-trap 'rm -f "$KEY_FILE"' EXIT
-printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY_FILE"
-
 echo "==> Signing $(basename "$DMG")"
-# sign_update prints an attribute fragment: sparkle:edSignature="..." length="..."
-SIGNATURE_LINE="$("$SIGN_UPDATE" "$DMG" --ed-key-file "$KEY_FILE")"
+# Two ways in, depending on where this runs.
+#
+# Locally the key lives in the login keychain, which is where generate_keys put it, and nothing
+# needs to be handed around at all. On CI there is no keychain, so the key arrives as a secret and
+# is written to a mode-600 file — never passed as an argument, because arguments are visible to
+# every process on the machine through ps.
+if [[ -n "${SPARKLE_PRIVATE_KEY:-}" ]]; then
+    KEY_FILE="$(mktemp)"
+    chmod 600 "$KEY_FILE"
+    trap 'rm -f "$KEY_FILE"' EXIT
+    printf '%s' "$SPARKLE_PRIVATE_KEY" > "$KEY_FILE"
+    SIGNATURE_LINE="$("$SIGN_UPDATE" "$DMG" --ed-key-file "$KEY_FILE")"
+else
+    if ! SIGNATURE_LINE="$("$SIGN_UPDATE" "$DMG" 2>&1)"; then
+        echo "error: could not sign the update." >&2
+        echo "       No SPARKLE_PRIVATE_KEY was set and the login keychain holds no Sparkle key." >&2
+        echo "       Run 'make sparkle-keys' once to create one." >&2
+        exit 1
+    fi
+fi
 
 DOWNLOAD_URL="https://github.com/cpkess/AbleKit/releases/download/v${VERSION}/$(basename "$DMG")"
 PUBLISHED="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"

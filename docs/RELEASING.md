@@ -1,146 +1,139 @@
 # Releasing
 
-The goal is that shipping a release is: update the changelog, tag, push.
+Everything is driven from the terminal. Xcode is never required.
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+make release VERSION=0.1.0    # build, sign, notarise, and sign the update feed
+make publish VERSION=0.1.0    # tag it and put it on GitHub Releases
 ```
 
-That triggers `.github/workflows/release.yml`, which tests, archives, signs, notarises, staples,
-builds the DMG, signs the Sparkle appcast, and publishes a GitHub Release.
+That is the whole routine, once the one-time setup below is done. `make status` will tell you at
+any point which parts are configured and which are not.
 
-Getting to that point takes some one-time setup.
+## What a release actually is
+
+Two files, both attached to a GitHub Release:
+
+| File | Purpose |
+|---|---|
+| `AbleKit-x.y.z.dmg` | What a person downloads, drags to Applications, and opens |
+| `appcast.xml` | What an already-installed copy reads to discover the update |
+
+AbleKit's feed URL is `releases/latest/download/appcast.xml`, so **publishing the release is what
+ships the update**. There is no update server to deploy and nothing else to push.
 
 ## One-time setup
 
-### 1. Developer ID certificate
+### 1. Update signing key
 
-You need a **Developer ID Application** certificate (not "Apple Development"), from an Apple
-Developer Program membership.
-
-Export it from Keychain Access as a `.p12` with a password, then:
+This proves an update came from you. Sparkle verifies it before unpacking anything, which is what
+stops a compromised release host from shipping arbitrary code to every installation.
 
 ```bash
-base64 -i DeveloperID.p12 | pbcopy
+make sparkle-keys
 ```
 
-Store as repository secrets:
+The private key goes into your login keychain; the public key is written into `Configs/Info.plist`
+for you. Commit that file — until the key ships inside a build, AbleKit refuses every update, which
+is the correct default rather than a bug.
 
-| Secret | Value |
-|---|---|
-| `MACOS_CERTIFICATE` | The base64 from above |
-| `MACOS_CERTIFICATE_PASSWORD` | The `.p12` password |
-| `SIGNING_IDENTITY` | e.g. `Developer ID Application: Example Ltd (ABCDE12345)` |
-| `DEVELOPMENT_TEAM` | The 10-character team ID |
+**Back it up now.** Losing this key means no existing installation can ever be updated again.
 
-Find the identity string with:
+```bash
+scripts/generate-keys.sh --export   # writes sparkle-private-key.txt, mode 600
+```
+
+Store it somewhere durable, and as the `SPARKLE_PRIVATE_KEY` repository secret if you want releases
+to run on CI. Then delete the file.
+
+### 2. Developer ID certificate
+
+You need a **Developer ID Application** certificate — "Apple Development" cannot notarise. Check
+what you have:
 
 ```bash
 security find-identity -v -p codesigning
 ```
 
-### 2. App Store Connect API key (for notarization)
+`make dmg` uses the first Developer ID it finds; override with `RELEASE_IDENTITY=...` if you have
+more than one.
 
-An API key is used rather than an Apple ID and app-specific password: it is scoped, revocable, and
-does not put an account password into CI.
+### 3. Notarization credentials
 
-Create one at App Store Connect ▸ Users and Access ▸ Integrations, with the **Developer** role.
-Download the `.p8` — it can only be downloaded once.
+Without notarization, Gatekeeper refuses to open the app on any Mac that has never seen it — and
+tells the user it is *damaged*, which reads as "this is malware" rather than "this is unsigned".
 
-```bash
-base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy
-```
+Create an App Store Connect API key (App Store Connect ▸ Users and Access ▸ Integrations, with the
+**Developer** role) and download the `.p8`. It can only be downloaded once.
 
-| Secret | Value |
-|---|---|
-| `AC_API_KEY` | The base64 `.p8` |
-| `AC_API_KEY_ID` | The key ID |
-| `AC_API_ISSUER_ID` | The issuer UUID |
-
-### 3. Sparkle signing key
-
-This is the key that proves an update came from you. **Losing it means no existing installation can
-ever be updated again.** Generate it once, on a trusted machine, and back it up somewhere durable.
+Then store it, once:
 
 ```bash
-xcodebuild -resolvePackageDependencies -project AbleKit.xcodeproj -clonedSourcePackagesDirPath .build/spm
-./scripts/generate-keys.sh
+xcrun notarytool store-credentials AbleKit \
+  --key ~/private_keys/AuthKey_XXXXXXXXXX.p8 \
+  --key-id XXXXXXXXXX \
+  --issuer xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ```
 
-Then:
-
-1. Put the **public** key into `Configs/Info.plist` as `SUPublicEDKey` and commit it.
-   Until that is set, AbleKit refuses every update — the correct default, not a bug.
-2. Store the **private** key as the `SPARKLE_PRIVATE_KEY` secret:
-   ```bash
-   ./scripts/generate-keys.sh --export
-   ```
-
-Sparkle's current key format is the base64 of a 32-byte seed. The scripts pass it to `sign_update`
-in a temporary file rather than on the command line, because arguments are visible to every process
-on the machine through `ps`.
-
-### 4. Runner image
-
-The workflows default to `macos-26`, which is needed for the Foundation Models SDK. If a different
-image or a self-hosted runner is required, set the repository **variable** `MACOS_RUNNER`.
+`make notarize` finds that profile automatically. Nothing else needs configuring.
 
 ## Cutting a release
 
-1. Add a section to `CHANGELOG.md` headed `## [x.y.z]`. The workflow extracts it for the release
-   notes and for the Sparkle update dialog, so write it for users.
+1. Add a section to `CHANGELOG.md` headed `## [x.y.z]`. It becomes the GitHub release notes *and*
+   the text shown in the update dialog, so write it for users.
 2. Commit.
-3. Tag `vx.y.z` and push.
+3. ```bash
+   make release VERSION=x.y.z
+   make publish VERSION=x.y.z
+   ```
 
-The version comes from the tag. The build number is the commit count, which guarantees it increases
-— Sparkle will not offer an update whose build number has not gone up.
+`publish` refuses to upload a DMG that is not notarised and stapled, because publishing one would
+tell everyone who downloads it that the app is damaged.
 
-## Testing the pipeline without publishing
+The build number is the commit count, so it always increases — Sparkle will not offer an update
+whose build number has not gone up.
 
-Run the workflow manually with **dry run** checked. It builds, signs and notarises, uploads the DMG
-and appcast as workflow artifacts, and publishes nothing.
-
-## Doing it by hand
+## Doing it in pieces
 
 ```bash
-xcodebuild archive -project AbleKit.xcodeproj -scheme AbleKit -configuration Release \
-  -destination 'generic/platform=macOS' -archivePath build/AbleKit.xcarchive \
-  MARKETING_VERSION=0.1.0 CURRENT_PROJECT_VERSION=1
-
-xcodebuild -exportArchive -archivePath build/AbleKit.xcarchive \
-  -exportPath build/export -exportOptionsPlist Configs/ExportOptions.plist
-
-export SIGNING_IDENTITY="Developer ID Application: ... (TEAMID)"
-export AC_API_KEY_PATH=~/private_keys/AuthKey_XXXX.p8
-export AC_API_KEY_ID=XXXXXXXXXX
-export AC_API_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-
-./scripts/sign-and-notarize.sh build/export/AbleKit.app Configs/AbleKit.entitlements
-./scripts/build-dmg.sh build/export/AbleKit.app 0.1.0 dist
-./scripts/sign-and-notarize.sh dist/AbleKit-0.1.0.dmg
-
-export SPARKLE_PRIVATE_KEY="..."
-./scripts/generate-appcast.sh dist/AbleKit-0.1.0.dmg 0.1.0 1 notes.txt dist/appcast.xml
+make release-build VERSION=0.1.0   # Release build, Developer ID signed
+make dmg VERSION=0.1.0             # + disk image, signed
+make notarize VERSION=0.1.0        # + notarised and stapled
+make appcast VERSION=0.1.0         # + signed update feed
 ```
 
-## Verifying a release
+## Releasing from CI instead
+
+`.github/workflows/release.yml` does the same thing on a `v*.*.*` tag, using the same scripts. It
+needs these repository secrets: `SIGNING_IDENTITY`, `MACOS_CERTIFICATE`,
+`MACOS_CERTIFICATE_PASSWORD`, `DEVELOPMENT_TEAM`, `AC_API_KEY`, `AC_API_KEY_ID`, `AC_API_ISSUER_ID`,
+`SPARKLE_PRIVATE_KEY`. It checks they are all present before starting the build rather than failing
+at notarization twenty minutes in.
+
+Run it manually with **dry run** checked to exercise the whole pipeline without publishing.
+
+## Verifying what you shipped
 
 ```bash
-# Signed, notarised, and accepted by Gatekeeper
-codesign --verify --deep --strict --verbose=2 /Applications/AbleKit.app
 spctl --assess --type execute --verbose /Applications/AbleKit.app
-xcrun stapler validate /Applications/AbleKit.app
+xcrun stapler validate dist/AbleKit-0.1.0.dmg
 ```
 
 `spctl` should say `accepted` and `source=Notarized Developer ID`.
+
+To confirm the update feed is signed with the key that actually ships in the app:
+
+```bash
+make status
+```
 
 ## Things that go wrong
 
 | Symptom | Cause |
 |---|---|
-| `errSecInternalComponent` while signing | The keychain is locked, or `set-key-partition-list` was not run |
-| Notarization rejects nested code | Sparkle's framework was not signed before the outer bundle. `sign-and-notarize.sh` signs inside-out for this reason |
 | "damaged and can't be opened" | Not notarised, or the ticket was not stapled |
+| Notarization rejects nested code | Something inside `Frameworks/` was signed after the bundle. `sign-app.sh` signs inside-out for exactly this reason |
+| `errSecInternalComponent` while signing | The keychain is locked |
 | No update offered | The build number did not increase, or `SUPublicEDKey` is empty |
-| `sign_update` rejects the key | Wrong format — it wants the base64 of a 32-byte seed |
+| `sign_update` cannot find a key | `make sparkle-keys` has not been run on this machine |
+| Permissions forgotten after every build | The app was ad-hoc signed. `make status` reports this |

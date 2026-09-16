@@ -2,20 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- AbleKit lives in the menu bar and has no Dock icon or main window. -->
-	<key>LSUIElement</key>
-	<true/>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
-
-	<!-- Sparkle. The feed is published by the release workflow alongside the DMG. -->
-	<key>SUFeedURL</key>
-	<string>https://github.com/cpkess/AbleKit/releases/latest/download/appcast.xml</string>
-	<!-- Filled in by scripts/generate-sparkle-key.sh; updates are refused while it is empty. -->
-	<key>SUPublicEDKey</key>
-	<string></string>
+	<key>LSUIElement</key>
+	<true/>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/cpkess/AbleKit/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>puXRdvAoNFUFFoqfzRqbd7k6peHOK7FxAyw/qIHpQHo=</string>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 </dict>

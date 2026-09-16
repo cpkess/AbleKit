@@ -27,3 +27,6 @@ ExportOptions.local.plist
 
 # Resolved package checkouts from xcodebuild
 AbleKit.xcodeproj/project.xcworkspace/
+
+# Exported Sparkle private key — never commit
+sparkle-private-key.txt

@@ -118,9 +118,8 @@ jobs:
 
       - name: Sign and notarize the app
         run: |
-          ./scripts/sign-and-notarize.sh \
-            "$RUNNER_TEMP/export/AbleKit.app" \
-            Configs/AbleKit.entitlements
+          ./scripts/sign-app.sh "$RUNNER_TEMP/export/AbleKit.app" "$SIGNING_IDENTITY"
+          ./scripts/notarize.sh "$RUNNER_TEMP/export/AbleKit.app"
 
       - name: Build the DMG
         run: |
@@ -133,23 +132,15 @@ jobs:
         run: |
           # The DMG is notarised in its own right so that Gatekeeper is satisfied by the download
           # itself, not only by the app once it has been dragged out.
-          ./scripts/sign-and-notarize.sh "dist/AbleKit-${{ steps.version.outputs.version }}.dmg"
+          DMG="dist/AbleKit-${{ steps.version.outputs.version }}.dmg"
+          ./scripts/sign-app.sh "$DMG" "$SIGNING_IDENTITY"
+          ./scripts/notarize.sh "$DMG"
 
       - name: Write the release notes
         id: notes
         run: |
           NOTES_FILE="$RUNNER_TEMP/notes.txt"
-          if [[ -f CHANGELOG.md ]]; then
-            # The section for this version, up to the next heading.
-            awk -v version="${{ steps.version.outputs.version }}" '
-              $0 ~ "^## \\[?" version { found = 1; next }
-              found && /^## / { exit }
-              found { print }
-            ' CHANGELOG.md | sed '/^[[:space:]]*$/d' > "$NOTES_FILE"
-          fi
-          if [[ ! -s "$NOTES_FILE" ]]; then
-            echo "AbleKit ${{ steps.version.outputs.version }}." > "$NOTES_FILE"
-          fi
+          ./scripts/release-notes.sh "${{ steps.version.outputs.version }}" > "$NOTES_FILE"
           echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Generate the Sparkle appcast

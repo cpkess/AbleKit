@@ -105,11 +105,20 @@ Honest scope for 0.1:
 
 ## Building
 
+Everything runs from the terminal; Xcode is not required.
+
 ```bash
 git clone https://github.com/cpkess/AbleKit.git
 cd AbleKit
-swift test --package-path AbleKitCore     # the core logic, no permissions needed
-open AbleKit.xcodeproj                    # then Run
+make run       # build, install to /Applications, launch
+```
+
+```bash
+make           # the full list of targets
+make test      # core logic — fast, needs no permissions
+make logs      # watch what AbleKit is doing
+make status    # signing, install state, update configuration
+make dmg       # a signed, installable disk image
 ```
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).

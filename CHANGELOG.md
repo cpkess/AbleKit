@@ -36,6 +36,9 @@ capable — reliability over breadth.
 - **Developer panel** — the context, capability, refinement and verification behind each step.
 - **Distribution** — Sparkle updates with EdDSA verification, a signed and notarised DMG, and a
   tag-triggered GitHub Actions release pipeline.
+- **Terminal workflow** — a Makefile covering the whole lifecycle, so Xcode is never required:
+  `make run` builds, installs and launches; `make release` produces a signed, notarised DMG and a
+  signed update feed; `make status` reports what is configured and what is not.
 
 ### Known limitations
 

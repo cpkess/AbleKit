@@ -10,24 +10,27 @@
 ```bash
 git clone https://github.com/cpkess/AbleKit.git
 cd AbleKit
-
-# The core logic. No app host, no permissions, no window server.
-swift test --package-path AbleKitCore
-
-# The app.
-open AbleKit.xcodeproj
+make run
 ```
 
-From the command line:
+`make run` builds, installs to `/Applications`, and launches. Installing rather than running from
+the build directory is deliberate: a stable path and a stable signature are what let a permission
+you grant once keep applying.
 
-```bash
-xcodebuild -resolvePackageDependencies -project AbleKit.xcodeproj -clonedSourcePackagesDirPath .build/spm
+Run `make` on its own for everything else. The targets worth knowing:
 
-xcodebuild build \
-  -project AbleKit.xcodeproj -scheme AbleKit -configuration Debug \
-  -destination 'platform=macOS,arch=arm64' \
-  -clonedSourcePackagesDirPath .build/spm -derivedDataPath .build/dd
-```
+| | |
+|---|---|
+| `make run` / `make restart` | Build, install, launch |
+| `make logs` | Stream AbleKit's own log output |
+| `make status` | Signing, install state, update configuration — start here when something is odd |
+| `make test` | Core logic. Fast, no permissions, no app host |
+| `make test-live` | Also exercise the real Apple Intelligence model |
+| `make reset-permissions` | Clear AbleKit's TCC grants and start over |
+| `make dmg` | A signed, installable disk image |
+
+Xcode still works normally (`open AbleKit.xcodeproj`) if you want a debugger or the view hierarchy
+inspector — the project is a normal one, not generated.
 
 ## Where things live
 
