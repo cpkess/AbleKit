@@ -79,12 +79,34 @@ step fail verification. Opt into `varying: false` only in tests that are actuall
 
 ## Permissions while developing
 
-TCC grants are tied to the code signature, so a rebuilt debug app is frequently a *new* app as far
-as macOS is concerned, and Accessibility permission has to be granted again. Two things help:
+TCC identifies an app by its **designated requirement**. For a real signing identity that is
+bundle id plus certificate, which does not change when you rebuild. For an *ad-hoc* signed app it
+is the code-directory hash, which changes on every single build — so every rebuild looks like a
+brand new application, the grant you just made belongs to the previous binary, and System Settings
+quietly fills up with identical "AbleKit" entries that all point at dead code.
 
-- Grant permission to the built app in `DerivedData` once and avoid cleaning.
-- If AbleKit stops being able to operate anything, check System Settings ▸ Privacy & Security ▸
-  Accessibility for a stale entry and remove it before re-adding.
+The project is therefore configured for automatic signing:
+
+```
+CODE_SIGN_STYLE  = Automatic
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = WZJ4ZPRH72
+```
+
+**Working on a different team?** Change `DEVELOPMENT_TEAM` in the target's build settings, or pass
+`DEVELOPMENT_TEAM=YOURTEAM` to `xcodebuild`. Any Apple Development certificate will do — the point
+is only that it is stable. CI passes `CODE_SIGNING_ALLOWED=NO` and is unaffected.
+
+If permissions ever get into a confused state, clear AbleKit's own entries and grant once more:
+
+```bash
+tccutil reset Accessibility com.ablekit.AbleKit
+tccutil reset ScreenCapture com.ablekit.AbleKit
+```
+
+**Screen Recording needs a relaunch.** `CGPreflightScreenCaptureAccess()` is resolved once per
+process, so a running app keeps being refused after you allow it. Onboarding says so and offers a
+Relaunch button rather than leaving you clicking Re-check. Accessibility takes effect immediately.
 
 The app tells you rather than failing quietly: a missing permission surfaces in the palette and in
 onboarding.

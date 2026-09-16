@@ -145,6 +145,16 @@ private struct PermissionRow: View {
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
+                        if permission.requiresRelaunchAfterGranting {
+                            Label(
+                                "If you have already allowed this, AbleKit has to be relaunched "
+                                    + "before macOS will honour it.",
+                                systemImage: "arrow.clockwise"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
 
@@ -160,9 +170,16 @@ private struct PermissionRow: View {
                                 }
                             }
                         }
-                        Button("Re-check") { state.permissions.refresh() }
-                            .buttonStyle(.link)
-                            .font(.caption)
+                        if permission.requiresRelaunchAfterGranting {
+                            // Re-checking will never help for this one, so offer the thing that will.
+                            Button("Relaunch") { Self.relaunch() }
+                                .buttonStyle(.link)
+                                .font(.caption)
+                        } else {
+                            Button("Re-check") { state.permissions.refresh() }
+                                .buttonStyle(.link)
+                                .font(.caption)
+                        }
                     }
                 }
             }
@@ -172,5 +189,18 @@ private struct PermissionRow: View {
 
     private var isGranted: Bool {
         state.permissions.isGranted(permission)
+    }
+
+    /// Restarts AbleKit so a Screen Recording grant takes effect.
+    ///
+    /// The new instance is launched with a short delay and `-n`, so it does not simply activate the
+    /// copy that is in the middle of quitting.
+    private static func relaunch() {
+        let url = Bundle.main.bundleURL
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", "sleep 1; open -n \"\(url.path)\""]
+        try? process.run()
+        NSApplication.shared.terminate(nil)
     }
 }

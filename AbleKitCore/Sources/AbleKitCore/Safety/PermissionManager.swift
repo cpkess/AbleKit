@@ -49,6 +49,15 @@ public enum PermissionKind: String, Sendable, Equatable, Codable, CaseIterable, 
         }
     }
 
+    /// Whether a grant only takes effect once AbleKit has been restarted.
+    ///
+    /// Screen Recording is resolved per process, so an app that is already running keeps being
+    /// refused until it is relaunched. Without saying so, the honest status AbleKit reports looks
+    /// exactly like the permission not having been granted at all.
+    public var requiresRelaunchAfterGranting: Bool {
+        self == .screenRecording
+    }
+
     /// The System Settings pane that grants it.
     public var settingsURL: URL? {
         switch self {
@@ -89,10 +98,17 @@ public struct SystemPermissionChecker: PermissionChecking {
     public func status(of permission: PermissionKind) -> PermissionStatus {
         switch permission {
         case .accessibility:
-            // Trust is process-wide and does not prompt when queried without the prompt option.
-            return AXIsProcessTrusted() ? .granted : .denied
+            // Queried with an explicit no-prompt dictionary rather than `AXIsProcessTrusted()`, so
+            // the answer is re-read from the system each time instead of being answered from
+            // whatever the process last observed.
+            let options = ["AXTrustedCheckOptionPrompt": false] as CFDictionary
+            return AXIsProcessTrustedWithOptions(options) ? .granted : .denied
         case .screenRecording:
             // Preflight checks without triggering the prompt or the capture indicator.
+            //
+            // This keeps returning false until the app is relaunched after the grant: the capture
+            // entitlement is resolved once per process. `requiresRelaunchAfterGranting` exists so
+            // onboarding can say that, rather than leaving the user clicking Re-check forever.
             return CGPreflightScreenCaptureAccess() ? .granted : .denied
         }
     }
