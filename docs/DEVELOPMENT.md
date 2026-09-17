@@ -29,6 +29,28 @@ Run `make` on its own for everything else. The targets worth knowing:
 | `make reset-permissions` | Clear AbleKit's TCC grants and start over |
 | `make dmg` | A signed, installable disk image |
 
+### Driving the running app
+
+The app listens for commands, so it can be exercised without touching it:
+
+```bash
+make palette              # or: make settings, make setup
+make ask GOAL="Open System Settings"
+make stop-task
+make diagnostics-on       # goals and control names in the log; off by default
+```
+
+`make ask` gives AbleKit a goal and prints each step as it completes, exiting 0 if the task
+completed. It is the quickest way to reproduce a planner problem — the first run of it showed the
+agent opening System Settings correctly and then opening it three more times, which no unit test had
+caught.
+
+`ask` exists only in Debug builds; see [SECURITY.md](SECURITY.md) for why. Consequential actions
+still stop for confirmation in the task window.
+
+A zsh note: zsh has a builtin called `log`, so in an interactive shell use `/usr/bin/log` to read
+AbleKit's logs directly. The Makefile runs under bash and is unaffected.
+
 Xcode still works normally (`open AbleKit.xcodeproj`) if you want a debugger or the view hierarchy
 inspector — the project is a normal one, not generated.
 

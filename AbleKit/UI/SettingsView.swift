@@ -33,7 +33,7 @@ private struct GeneralSettings: View {
             LabeledContent("Shortcut") {
                 VStack(alignment: .trailing, spacing: 4) {
                     ShortcutRecorder(shortcut: $settings.shortcut) {
-                        (NSApplication.shared.delegate as? AppDelegate)?.registerShortcut()
+                        AppDelegate.shared?.registerShortcut()
                     }
                     if state.shortcutRegistrationFailed {
                         // Said plainly, because a shortcut that another app has already claimed

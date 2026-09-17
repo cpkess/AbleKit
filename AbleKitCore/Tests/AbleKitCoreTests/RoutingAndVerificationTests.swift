@@ -184,6 +184,20 @@ struct VerifierTests {
         #expect(result.outcome == .succeeded)
     }
 
+    @Test("An app's old name still verifies against the app it became")
+    func legacyNameMatchesByBundle() throws {
+        // The planner said "System Preferences"; the app is called System Settings now.
+        let after = context(app: "System Settings", bundle: "com.apple.systempreferences")
+        let result = try #require(
+            Verifier.deterministicVerdict(
+                action: .openApplication(ApplicationReference(name: "System Preferences")),
+                before: context(app: "Finder", bundle: "com.apple.finder"),
+                after: after
+            )
+        )
+        #expect(result.outcome == .succeeded)
+    }
+
     @Test("A screen that did not change at all means the action did nothing")
     func unchangedScreenIsFailure() throws {
         let same = context(app: "Tracker", bundle: "com.example")

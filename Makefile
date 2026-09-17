@@ -41,7 +41,13 @@ help:
 	@echo "    make stop                Quit AbleKit"
 	@echo "    make build               Build only (Debug)"
 	@echo "    make logs                Stream AbleKit's log output"
-	@echo "    make status              Signing, install state and update configuration"
+	@echo "    make status              Signing, install state, permissions, update configuration"
+	@echo ""
+	@echo "  Driving the running app"
+	@echo "    make palette | settings | setup   Open that window"
+	@echo "    make ask GOAL=\"...\"          Give AbleKit a task and follow it (Debug builds)"
+	@echo "    make stop-task           Stop the running task"
+	@echo "    make diagnostics-on      Include goals and control names in logs (off by default)"
 	@echo ""
 	@echo "  Testing"
 	@echo "    make test                Core tests (fast, no permissions needed)"
@@ -96,6 +102,37 @@ logs:
 .PHONY: status
 status:
 	@scripts/status.sh
+	@echo ""
+	@echo "Running app"
+	@scripts/command.sh status
+	@sleep 1
+	@/usr/bin/log show --last 5s --style compact \
+	    --predicate 'subsystem == "$(BUNDLE_ID)" AND eventMessage BEGINSWITH "Status:"' \
+	    | sed -n 's/.*Status: //p' | tr ' ' '\n' | sed 's/^/  /;s/=/  /'
+
+# ------------------------------------------------------------ driving the app
+
+.PHONY: palette settings setup stop-task
+palette:
+	@scripts/command.sh palette
+settings:
+	@scripts/command.sh settings
+setup:
+	@scripts/command.sh setup
+stop-task:
+	@scripts/command.sh stop
+
+# make ask GOAL="Open System Settings"   (Debug builds only)
+.PHONY: ask
+ask:
+	@test -n "$(GOAL)" || { echo 'usage: make ask GOAL="Open System Settings"'; exit 1; }
+	@scripts/ask.sh "$(GOAL)"
+
+.PHONY: diagnostics-on diagnostics-off
+diagnostics-on:
+	@scripts/command.sh diagnostics on && echo "==> Diagnostic logging on: goals and control names appear in logs"
+diagnostics-off:
+	@scripts/command.sh diagnostics off && echo "==> Diagnostic logging off"
 
 # ------------------------------------------------------------------ testing
 

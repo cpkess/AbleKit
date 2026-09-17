@@ -198,4 +198,40 @@ struct LiveModelTests {
         // The window title changed and a Save button appeared, so this should not read as a failure.
         #expect(result.outcome != .failed)
     }
+
+    @Test("After the goal has verifiably been done, the planner says so")
+    func completesAfterVerifiedSuccess() async throws {
+        let desktop = DesktopContext(
+            frontmostApplication: RunningApplicationInfo(
+                bundleIdentifier: "com.apple.systempreferences",
+                localizedName: "System Settings",
+                processIdentifier: 600,
+                isActive: true
+            ),
+            focusedWindow: WindowInfo(
+                title: "General", owningApplication: "System Settings",
+                frame: CGRect(x: 0, y: 0, width: 700, height: 600), isFocused: true
+            ),
+            arrangement: .fixture()
+        )
+        let history = [
+            StepRecord(
+                index: 0,
+                action: .openApplication(ApplicationReference(name: "System Settings")),
+                rationale: "Open it",
+                classification: .routine,
+                capability: .native,
+                outcome: .succeeded
+            )
+        ]
+        let goal = "Open System Settings"
+        let step = try await provider.planNextStep(
+            goal: goal,
+            context: AgentContext(goal: goal, desktop: desktop, history: history, stepIndex: 1)
+        )
+        guard case .complete = step.action else {
+            Issue.record("expected completion, got \(step.action) — \(step.rationale)")
+            return
+        }
+    }
 }

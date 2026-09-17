@@ -67,8 +67,14 @@ policy, not by AbleKit.
 
 ## Logging
 
-Diagnostic logging is off by default. When enabled it records steps and outcomes to the system log —
-never screen contents, never text you typed, never clipboard contents.
+AbleKit always writes a little to the system log: that a task started and finished, how many steps
+it took, which kind of action each step was, and whether it worked. None of that describes your
+screen or what you asked for.
+
+**Diagnostic Logging** (off by default) adds the goal you typed, the names of the controls AbleKit
+acted on, and the reasons steps failed — which is what makes a problem diagnosable. Even then, text
+AbleKit types or sends to another application is recorded only as a character count, and
+screenshots, screen text and clipboard contents are never logged.
 
 ## Permissions
 

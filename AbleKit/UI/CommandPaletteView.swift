@@ -92,7 +92,7 @@ struct CommandPaletteView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
             Button("Set Up\u{2026}") {
-                (NSApplication.shared.delegate as? AppDelegate)?.showOnboarding()
+                AppDelegate.shared?.showOnboarding()
                 dismiss()
             }
             .buttonStyle(.link)

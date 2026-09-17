@@ -51,6 +51,8 @@ public final class AgentSession {
     private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
     private var loopDetector: LoopDetector
     private var consecutiveFailures = 0
+    /// How many times in a row the planner has proposed something already done.
+    private var redundantProposals = 0
 
     public init(
         goal: String,
@@ -183,6 +185,36 @@ public final class AgentSession {
                 finish(.failed(reason))
                 return
             }
+
+            // Has this already been done? The on-device model reliably fails to notice that a goal
+            // is met: asked to open System Settings, it opened it, saw it open, and opened it three
+            // more times until the repeat limit ended the task as a failure. For actions whose
+            // effect is the same however often they run, repeating a verified success achieves
+            // nothing, so it is not executed. The first time, the planner is told why; the second
+            // time, the work is evidently done and the task completes.
+            if let earlier = alreadySucceeded(step.action) {
+                redundantProposals += 1
+                if redundantProposals >= 2 {
+                    finish(.completed(Self.completionSummary(for: earlier.action)))
+                    return
+                }
+                history.append(
+                    StepRecord(
+                        index: stepIndex,
+                        action: step.action,
+                        rationale: step.rationale,
+                        classification: .routine,
+                        capability: .control,
+                        outcome: .skipped(
+                            "Not repeated: this already worked. If the goal is achieved, complete."
+                        ),
+                        resultingFingerprint: context.stateFingerprint
+                    )
+                )
+                stepIndex += 1
+                continue
+            }
+            redundantProposals = 0
 
             // Would this just repeat something that is going nowhere?
             if loopDetector.wouldRepeat(step.action) {
@@ -394,6 +426,42 @@ public final class AgentSession {
             let remaining = deadline.timeIntervalSinceNow
             guard remaining > 0 else { break }
             try? await Task.sleep(for: .milliseconds(Int(min(remaining, 0.05) * 1000)))
+        }
+    }
+
+    /// The earlier verified success of this same action, if the action is one whose effect does not
+    /// change with repetition.
+    private func alreadySucceeded(_ action: DesktopAction) -> StepRecord? {
+        guard Self.isIdempotent(action) else { return nil }
+        let signature = LoopDetector.signature(for: action)
+        return history.last { record in
+            record.outcome.isSuccess && LoopDetector.signature(for: record.action) == signature
+        }
+    }
+
+    /// Actions that leave the machine in the same state however many times they run.
+    ///
+    /// Clicks, keystrokes and scrolls are deliberately absent: pressing Next twice or scrolling
+    /// twice is ordinary progress.
+    static func isIdempotent(_ action: DesktopAction) -> Bool {
+        switch action {
+        case .openApplication, .activateApplication:
+            true
+        case .nativeAction(let operation):
+            switch operation {
+            case .openURL, .openSystemSettings, .revealInFinder, .setClipboard: true
+            }
+        default:
+            false
+        }
+    }
+
+    static func completionSummary(for action: DesktopAction) -> String {
+        switch action {
+        case .openApplication(let app), .activateApplication(let app):
+            "\(app.displayName) is open."
+        default:
+            "Done: \(action.summary.lowercased())."
         }
     }
 

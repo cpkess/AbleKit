@@ -19,11 +19,6 @@ struct AbleKitApp: App {
         } label: {
             Image(systemName: appDelegate.state.isRunning ? "wand.and.sparkles" : "wand.and.rays")
         }
-
-        Settings {
-            SettingsView()
-                .environment(appDelegate.state)
-        }
     }
 
     /// The menu-bar icon can be hidden, but hiding it while a task is running would leave the user

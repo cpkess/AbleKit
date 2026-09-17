@@ -355,4 +355,51 @@ struct AgentSessionTests {
         #expect(session.phase == .failed)
         #expect(session.history.last?.outcome == .declined)
     }
+
+    @Test("An app that is already open is not reopened, and the task completes")
+    func completesInsteadOfReopening() async {
+        // The planner that motivated this: it keeps asking to open an app that is already open.
+        let intelligence = ScriptedIntelligence.repeating(
+            .openApplication(ApplicationReference(name: "Tracker"))
+        )
+        let capability = RecordingCapability(kind: .native)
+        let session = makeSession(intelligence: intelligence, capability: capability)
+
+        await session.run()
+
+        #expect(session.phase == .completed)
+        #expect(session.termination == .completed("Tracker is open."))
+        // Opened once; the repeat was skipped rather than executed.
+        #expect(capability.executed.count == 1)
+        #expect(session.history.count == 2)
+        if case .skipped = session.history.last?.outcome {} else {
+            Issue.record("expected the repeat to be skipped, got \(String(describing: session.history.last?.outcome))")
+        }
+    }
+
+    @Test("One redundant proposal is a nudge, not the end, when new work follows")
+    func redundantProposalThenProgress() async {
+        let open = DesktopAction.openApplication(ApplicationReference(name: "Tracker"))
+        let intelligence = ScriptedIntelligence(actions: [
+            open,
+            open,
+            .click(target: .element(.fixture())),
+            .complete(summary: "Saved."),
+        ])
+        let capability = RecordingCapability()
+        let session = makeSession(intelligence: intelligence, capability: capability)
+
+        await session.run()
+
+        #expect(session.termination == .completed("Saved."))
+        #expect(capability.executed.count == 2)
+    }
+
+    @Test("Repeating a click is progress, not redundancy")
+    func clicksAreNotIdempotent() {
+        #expect(!AgentSession.isIdempotent(.click(target: .element(.fixture()))))
+        #expect(!AgentSession.isIdempotent(.scroll(target: .point(.zero), deltaX: 0, deltaY: -3)))
+        #expect(AgentSession.isIdempotent(.openApplication(ApplicationReference(name: "Mail"))))
+        #expect(AgentSession.isIdempotent(.nativeAction(.openURL("https://example.com"))))
+    }
 }

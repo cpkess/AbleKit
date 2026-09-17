@@ -45,10 +45,12 @@ struct MenuBarMenu: View {
         if let reason = state.blockingReason {
             Divider()
             Text(reason)
-            Button("Open Setup\u{2026}") { appDelegate?.showOnboarding() }
         }
 
         Divider()
+        // Always available, not only while something is missing: permissions can be revoked, and
+        // this is the one place that shows their live state.
+        Button("Setup & Permissions\u{2026}") { appDelegate?.showOnboarding() }
         Button("Settings\u{2026}") { appDelegate?.showSettings() }
             .keyboardShortcut(",", modifiers: .command)
         Button("Quit AbleKit") { NSApplication.shared.terminate(nil) }
@@ -56,6 +58,6 @@ struct MenuBarMenu: View {
     }
 
     private var appDelegate: AppDelegate? {
-        NSApplication.shared.delegate as? AppDelegate
+        AppDelegate.shared
     }
 }

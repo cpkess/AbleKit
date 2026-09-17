@@ -1,25 +1,43 @@
 import AbleKitCore
 import AppKit
 import SwiftUI
+import os
 
 /// Owns the pieces of AbleKit that SwiftUI scenes cannot: the global shortcut, the floating
 /// palette, the HUD panel, and the first-run onboarding window.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
+    /// The one instance, for views that need to open a window.
+    ///
+    /// `NSApplication.shared.delegate` cannot be used for this. Under `@NSApplicationDelegateAdaptor`
+    /// it is SwiftUI's own forwarding object, not this class, so a cast to `AppDelegate` quietly
+    /// yields `nil` — which is how every menu item in 0.1.0 ended up doing nothing at all.
+    private(set) static weak var shared: AppDelegate?
+
     let state = AppState()
 
     private var palette: PaletteWindowController?
     private var hud: HUDWindowController?
-    private var onboarding: NSWindowController?
+    private var onboarding: NSWindow?
+    private var settings: NSWindow?
+    private let log = Logger(subsystem: "com.ablekit.AbleKit", category: "App")
+    private lazy var commands = CommandListener(delegate: self)
+
+    override init() {
+        super.init()
+        Self.shared = self
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         registerShortcut()
+        commands.start()
 
         Task {
             await state.refreshEnvironment()
             // Onboarding is shown only when something is actually missing. An app that greets a
             // returning user with a setup screen has stopped respecting their time.
+            state.logStatus()
             if !state.permissions.hasMinimumPermissions {
                 showOnboarding()
             }
@@ -46,10 +64,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Windows
 
     func registerShortcut() {
-        let registered = HotKeyCenter.shared.register(state.settings.shortcut) { [weak self] in
+        let shortcut = state.settings.shortcut
+        let registered = HotKeyCenter.shared.register(shortcut) { [weak self] in
+            self?.log.info("Shortcut pressed")
             self?.togglePalette()
         }
         state.shortcutRegistrationFailed = !registered
+        if registered {
+            log.notice("Shortcut \(shortcut.displayString, privacy: .public) registered")
+        } else {
+            log.error("Shortcut \(shortcut.displayString, privacy: .public) is taken by another app")
+        }
     }
 
     func togglePalette() {
@@ -74,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = palette ?? PaletteWindowController(state: state, delegate: self)
         palette = controller
         controller.show()
+        log.info("Palette shown")
     }
 
     func hidePalette() {
@@ -87,33 +113,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showOnboarding() {
-        if let onboarding {
-            onboarding.showWindow(nil)
-            NSApp.activate()
-            return
-        }
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 560),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
+        let window = onboarding ?? makeWindow(
+            title: "Welcome to AbleKit",
+            size: NSSize(width: 560, height: 600),
+            content: OnboardingView(onDone: { [weak self] in self?.onboarding?.close() })
         )
-        window.title = "Welcome to AbleKit"
-        window.titlebarAppearsTransparent = true
-        window.center()
-        window.contentView = NSHostingView(
-            rootView: OnboardingView().environment(state)
-        )
-        let controller = NSWindowController(window: window)
-        onboarding = controller
-        controller.showWindow(nil)
-        NSApp.activate()
+        onboarding = window
+        present(window)
+        log.info("Onboarding shown")
     }
 
     func showSettings() {
+        let window = settings ?? makeWindow(
+            title: "AbleKit Settings",
+            size: NSSize(width: 560, height: 460),
+            content: SettingsView()
+        )
+        settings = window
+        present(window)
+        log.info("Settings shown")
+    }
+
+    /// A window for SwiftUI content that survives being closed.
+    ///
+    /// Settings are hosted here rather than in a SwiftUI `Settings` scene because an accessory app
+    /// has no reliable way to open that scene from AppKit: the old `showSettingsWindow:` action is
+    /// ignored on current macOS, and `openSettings` is only reachable from inside a view.
+    private func makeWindow(title: String, size: NSSize, content: some View) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = title
+        window.titlebarAppearsTransparent = true
+        // Without this, AppKit frees the window when it is closed, and the next attempt to show it
+        // does nothing — the reason setup could not be reopened.
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: content.environment(state))
+        window.center()
+        return window
+    }
+
+    /// Brings a window to the front of an app that has no Dock icon and is usually not active.
+    private func present(_ window: NSWindow) {
         NSApp.activate()
-        if #available(macOS 14.0, *) {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        }
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
     }
 }

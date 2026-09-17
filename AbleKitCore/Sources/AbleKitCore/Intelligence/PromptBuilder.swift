@@ -293,15 +293,26 @@ public struct PromptBuilder: Sendable {
     private func describeHistory(_ history: [StepRecord]) -> String? {
         guard !history.isEmpty else { return nil }
         let recent = history.suffix(budget.maximumHistoryEntries)
-        var lines = ["WHAT HAS BEEN TRIED:"]
+        // Headed as progress, not as "attempts": framed as things tried, the model read a verified
+        // success as something still to be done, and kept doing it.
+        var lines = ["STEPS ALREADY TAKEN (\u{2713} means it was checked and worked):"]
         if history.count > recent.count {
             lines.append("(\(history.count - recent.count) earlier steps omitted)")
         }
         for record in recent {
-            lines.append("\(record.index + 1). \(record.action.summary) \u{2014} \(record.outcome.summary)")
+            let mark = record.outcome.isSuccess ? "\u{2713}" : "\u{2717}"
+            lines.append("\(mark) \(record.action.summary) \u{2014} \(record.outcome.summary)")
         }
-        if let lastFailure = recent.last(where: { !$0.outcome.isSuccess }) {
-            lines.append("The last problem was: \(lastFailure.outcome.summary). Do not simply repeat it.")
+        if let last = recent.last {
+            if case .skipped(let reason) = last.outcome {
+                lines.append(reason)
+            } else if last.outcome.isSuccess {
+                lines.append(
+                    "The last step worked. If the goal is now achieved, complete. Never repeat a step marked \u{2713}."
+                )
+            } else {
+                lines.append("The last step did not work (\(last.outcome.summary)). Do not simply repeat it.")
+            }
         }
         return lines.joined(separator: "\n")
     }

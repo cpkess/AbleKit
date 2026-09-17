@@ -128,11 +128,12 @@ final class AppState {
         )
         self.session = session
 
+        log.notice("Task started: \(self.redacted(trimmed), privacy: .public)")
         runTask = Task { [weak self] in
             await session.run()
             self?.finish(session)
         }
-        observeOverlay(for: session)
+        observe(session)
     }
 
     func run(_ skill: Skill, parameters: [String: String]) {
@@ -163,14 +164,69 @@ final class AppState {
     private func finish(_ session: AgentSession) {
         overlay.hide()
         guard let termination = session.termination else { return }
-        log.notice("Task finished: \(termination.userMessage, privacy: .public)")
+        log.notice(
+            "Task finished (\(session.phase.rawValue, privacy: .public)) after \(session.history.count) steps: \(self.redacted(termination.userMessage), privacy: .public)"
+        )
     }
 
-    /// Keeps the on-screen highlight following whatever the agent is about to touch.
-    private func observeOverlay(for session: AgentSession) {
+    // MARK: - Logging
+
+    /// Reports the things that decide whether AbleKit can work at all.
+    func logStatus() {
+        let accessibility = permissions.status(of: .accessibility).rawValue
+        let screen = permissions.status(of: .screenRecording).rawValue
+        let intelligence: String
+        switch intelligenceAvailability {
+        case .available: intelligence = "available"
+        case .unavailable(let reason, _): intelligence = "unavailable (\(reason))"
+        }
+        log.notice(
+            "Status: accessibility=\(accessibility, privacy: .public) screenRecording=\(screen, privacy: .public) intelligence=\(intelligence, privacy: .public) shortcut=\(self.settings.shortcut.displayString, privacy: .public)\(self.shortcutRegistrationFailed ? " (unavailable)" : "", privacy: .public) diagnosticLogging=\(self.settings.diagnosticLoggingEnabled ? "on" : "off", privacy: .public)"
+        )
+    }
+
+    /// Text that may describe the user's screen or intentions is logged only when they have
+    /// switched Diagnostic Logging on. Otherwise its length stands in for it, which is still enough
+    /// to tell "empty" from "something" when reading a log.
+    private func redacted(_ text: String) -> String {
+        settings.diagnosticLoggingEnabled ? text : "<\(text.count) characters; enable Diagnostic Logging to see>"
+    }
+
+    private func logStep(_ record: StepRecord) {
+        let outcome: String
+        switch record.outcome {
+        case .succeeded: outcome = "succeeded"
+        case .failed(let reason): outcome = "failed: \(redacted(reason))"
+        case .inconclusive(let reason): outcome = "unverified: \(redacted(reason))"
+        case .blocked(let reason): outcome = "blocked: \(reason)"
+        case .declined: outcome = "declined by you"
+        case .skipped(let reason): outcome = "skipped: \(reason)"
+        }
+        let action = settings.diagnosticLoggingEnabled
+            ? record.action.logSummary
+            : record.action.kindName
+        log.notice(
+            "Step \(record.index + 1): \(action, privacy: .public) via \(record.capability.rawValue, privacy: .public) → \(outcome, privacy: .public)"
+        )
+    }
+
+    /// Follows a running task: keeps the on-screen highlight on whatever the agent is about to
+    /// touch, and logs each step as it completes.
+    private func observe(_ session: AgentSession) {
         Task { [weak self, weak session] in
-            while let session, !session.phase.isTerminal {
-                guard let self else { return }
+            var loggedSteps = 0
+            var lastPhase: AgentPhase?
+            while let session, let self {
+                if session.phase != lastPhase {
+                    lastPhase = session.phase
+                    log.info("Phase: \(session.phase.rawValue, privacy: .public)")
+                }
+                while loggedSteps < session.history.count {
+                    logStep(session.history[loggedSteps])
+                    loggedSteps += 1
+                }
+                if session.phase.isTerminal { break }
+
                 if let frame = session.pendingAction?.pointerTarget?.highlightFrame {
                     overlay.show(frame)
                 } else {
@@ -226,6 +282,46 @@ extension PointerTarget {
             element.frame.width > 0 ? element.frame : nil
         case .point(let point):
             CGRect(x: point.x - 18, y: point.y - 18, width: 36, height: 36)
+        }
+    }
+}
+
+extension DesktopAction {
+    /// A description safe for a log: controls are named, but text being typed or sent elsewhere is
+    /// reduced to its length.
+    var logSummary: String {
+        switch self {
+        case .typeText(let text): "Typing \(text.count) characters"
+        case .askAIBridge(let bridge, let prompt):
+            "Asking \(bridge.displayName) (\(prompt.count) characters)"
+        case .requestUserInput: "Asking you a question"
+        case .nativeAction(.setClipboard(let text)): "Copying \(text.count) characters"
+        default: summary
+        }
+    }
+
+    /// Just the kind of action, with nothing about what it acted on.
+    var kindName: String {
+        switch self {
+        case .openApplication: "openApplication"
+        case .activateApplication: "activateApplication"
+        case .click: "click"
+        case .doubleClick: "doubleClick"
+        case .rightClick: "rightClick"
+        case .movePointer: "movePointer"
+        case .typeText: "typeText"
+        case .pressKey: "pressKey"
+        case .hotkey: "hotkey"
+        case .scroll: "scroll"
+        case .drag: "drag"
+        case .wait: "wait"
+        case .accessibilityAction(_, let action): "accessibility \(action)"
+        case .nativeAction: "nativeAction"
+        case .askAIBridge(let bridge, _): "ask \(bridge.rawValue)"
+        case .requestConfirmation: "requestConfirmation"
+        case .requestUserInput: "requestUserInput"
+        case .complete: "complete"
+        case .fail: "fail"
         }
     }
 }

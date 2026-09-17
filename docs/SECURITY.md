@@ -28,6 +28,22 @@ Instead AbleKit runs with the **Hardened Runtime**, is signed with a Developer I
 is bounded by the two permissions above. The entitlements file states this in place rather than
 leaving it to be inferred.
 
+### The command channel
+
+`make palette`, `make ask` and friends reach the running app through a distributed notification.
+That was chosen over a URL scheme because a web page can open a URL — any link could otherwise
+start a task — but cannot post a distributed notification.
+
+Any local process can, though, and that is a confused-deputy risk: a program *without*
+Accessibility permission could ask AbleKit, which has it, to operate other applications for it.
+So the channel is split:
+
+- Opening AbleKit's own windows (`palette`, `settings`, `setup`), reporting status, stopping a task
+  and toggling diagnostic logging are always accepted. None of them touches another application.
+- `ask`, which starts a task, is compiled only into **Debug** builds. Release builds log and
+  ignore it. Even in Debug, the task runs through the full safety policy, so consequential steps
+  still wait for the user in the task window and restricted ones are still refused.
+
 ## What AbleKit will not do
 
 These are enforced in `SensitiveActionDetector` and cannot be turned off in Settings:

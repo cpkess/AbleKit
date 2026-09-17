@@ -8,8 +8,11 @@ import SwiftUI
 /// throwing up a system prompt and hoping. Nothing here fails silently: every permission shows its
 /// live status and re-checks when the user comes back from System Settings (brief §26).
 struct OnboardingView: View {
+    /// Closes the window. Passed in because `dismiss` does nothing for a view hosted in an AppKit
+    /// window, which is what left the Done button inert.
+    var onDone: () -> Void = {}
+
     @Environment(AppState.self) private var state
-    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         ScrollView {
@@ -112,7 +115,7 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Done") { dismiss() }
+            Button("Done") { onDone() }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!state.permissions.hasMinimumPermissions)
         }

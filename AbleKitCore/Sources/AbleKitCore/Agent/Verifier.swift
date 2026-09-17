@@ -121,6 +121,15 @@ public struct Verifier: Sendable {
         if let bundle = reference.bundleIdentifier, !bundle.isEmpty {
             return running.bundleIdentifier?.caseInsensitiveCompare(bundle) == .orderedSame
         }
+        // A name the locator knows is compared by bundle identifier, because names drift: the
+        // planner still says "System Preferences" for an app that has been called System Settings
+        // for years, and comparing names reported a correct launch as the wrong app.
+        if let name = reference.name?.lowercased().trimmed,
+            let bundle = ApplicationLocator.knownBundleIdentifiers[name],
+            let runningBundle = running.bundleIdentifier
+        {
+            return runningBundle.caseInsensitiveCompare(bundle) == .orderedSame
+        }
         if let name = reference.name, !name.isEmpty {
             // Matching loosely on both sides: the user says "Safari", the system may report
             // "Safari" or a longer localised name, and a planner may say "System Settings" for

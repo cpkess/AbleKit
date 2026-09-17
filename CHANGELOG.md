@@ -5,6 +5,19 @@ All notable changes to AbleKit are recorded here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The menu bar menu did nothing: Ask AbleKit, Settings and Setup all silently failed. Settings
+  and Setup now open reliably, and Setup can be reopened at any time from the menu.
+- Finished tasks no longer keep going. Asked to open an app, AbleKit opened it and then tried to
+  open it again until it gave up and reported a failure. It now stops once the goal is done.
+- An app referred to by an old name (such as "System Preferences") is no longer mistaken for the
+  wrong app after it opens.
+
+### Changed
+
+- Permissions granted to one AbleKit build now carry over to later ones.
+
 ## [0.1.0]
 
 The first foundation release. The goal of 0.1 is to prove the architecture, not to be broadly
