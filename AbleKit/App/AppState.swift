@@ -291,7 +291,8 @@ extension DesktopAction {
     /// reduced to its length.
     var logSummary: String {
         switch self {
-        case .typeText(let text): "Typing \(text.count) characters"
+        case .typeText(let text, let field):
+            "Typing \(text.count) characters" + (field.map { " into \($0.description)" } ?? "")
         case .askAIBridge(let bridge, let prompt):
             "Asking \(bridge.displayName) (\(prompt.count) characters)"
         case .requestUserInput: "Asking you a question"
@@ -316,6 +317,8 @@ extension DesktopAction {
         case .drag: "drag"
         case .wait: "wait"
         case .accessibilityAction(_, let action): "accessibility \(action)"
+        case .chooseMenuItem: "chooseMenuItem"
+        case .readScreen: "readScreen"
         case .nativeAction: "nativeAction"
         case .askAIBridge(let bridge, _): "ask \(bridge.rawValue)"
         case .requestConfirmation: "requestConfirmation"

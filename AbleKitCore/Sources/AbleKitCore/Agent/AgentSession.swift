@@ -53,6 +53,8 @@ public final class AgentSession {
     private var consecutiveFailures = 0
     /// How many times in a row the planner has proposed something already done.
     private var redundantProposals = 0
+    /// Set by a readScreen step: the next observation includes the screen's pixels.
+    private var nextObservationReadsScreen = false
 
     public init(
         goal: String,
@@ -227,6 +229,24 @@ public final class AgentSession {
                 return
             }
 
+            // Reading the screen changes what the next observation gathers rather than touching
+            // anything, so it is handled here and recorded like any other step.
+            if case .readScreen = step.action {
+                nextObservationReadsScreen = true
+                history.append(
+                    StepRecord(
+                        index: stepIndex,
+                        action: step.action,
+                        rationale: step.rationale,
+                        classification: .routine,
+                        capability: .visual,
+                        outcome: .succeeded
+                    )
+                )
+                stepIndex += 1
+                continue
+            }
+
             // Questions for the user are handled here rather than by a capability, because the
             // answer becomes context for the next planning turn.
             if case .requestUserInput(let prompt) = step.action {
@@ -328,6 +348,11 @@ public final class AgentSession {
     /// This is principle 5 in practice: visual understanding is not the default path, it is what
     /// happens when the semantic path comes back empty.
     private func collectContext() async -> DesktopContext {
+        if nextObservationReadsScreen {
+            nextObservationReadsScreen = false
+            currentActivity = "Reading the screen"
+            return await collector.collect(options: .full)
+        }
         let semantic = await collector.collect(options: .semantic)
         guard semantic.accessibility?.interactiveElements.isEmpty ?? true else {
             return semantic

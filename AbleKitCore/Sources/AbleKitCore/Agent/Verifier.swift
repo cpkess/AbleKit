@@ -62,6 +62,9 @@ public struct Verifier: Sendable {
         case .wait:
             return .succeeded("Waited.")
 
+        case .readScreen:
+            return .succeeded("The screen will be read on the next look.")
+
         case .complete, .fail, .requestConfirmation, .requestUserInput:
             return .succeeded("No desktop change was expected.")
 
@@ -75,14 +78,22 @@ public struct Verifier: Sendable {
             // nothing further for the screen to tell us.
             return .succeeded("The bridge returned an answer.")
 
-        case .typeText(let text):
-            // If the focused field now contains what was typed, that settles it. If it does not,
-            // the text may have gone somewhere legitimate that we cannot see, so defer.
-            guard let focused = after.accessibility?.elements.first(where: \.isFocused),
-                let value = focused.value
-            else { return nil }
-            if value.contains(text) {
-                return .succeeded("The text appears in \(focused.description).")
+        case .typeText(let text, let field):
+            // If the field now contains what was typed, that settles it. The named field is found
+            // again by role and label, since its id belongs to the earlier snapshot. If the text is
+            // not visible, it may have gone somewhere legitimate that cannot be read, so defer.
+            let candidates: [ElementReference?] = [
+                field.flatMap { field in
+                    after.accessibility?.elements.first {
+                        $0.role == field.role && $0.bestLabel == field.bestLabel
+                    }
+                },
+                after.accessibility?.elements.first(where: \.isFocused),
+            ]
+            for case let element? in candidates {
+                if let value = element.value, value.contains(text) {
+                    return .succeeded("The text appears in \(element.description).")
+                }
             }
             return nil
 

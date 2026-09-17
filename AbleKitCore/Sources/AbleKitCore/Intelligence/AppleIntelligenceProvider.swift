@@ -70,7 +70,7 @@ public struct AppleIntelligenceProvider: IntelligenceProvider {
                 generating: PlannedStepDraft.self,
                 options: Self.planningOptions
             )
-            return try decoder.decode(response.content, context: context.desktop)
+            return try decoder.decode(response.content, context: context.desktop, goal: goal)
         }
     }
 

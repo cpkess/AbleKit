@@ -98,8 +98,13 @@ public struct ScreenObservation: Sendable {
         self.textRegions = textRegions
     }
 
-    /// All recognised text, reading roughly top-to-bottom then left-to-right.
-    public var readableText: String {
+    /// Recognised text in reading order — top to bottom, then left to right — each with the id the
+    /// planner uses to point at it (`t1`, `t2`, …).
+    ///
+    /// The prompt and the decoder both use this, so an id always means the same piece of text. That
+    /// shared ordering is what makes the visual path usable at all: text the planner can read but
+    /// not locate is text it cannot click.
+    public var labeledTextRegions: [(id: String, text: RecognizedText)] {
         textRegions
             .sorted { lhs, rhs in
                 // Treat lines within ~6pt of each other as the same row so that a row of buttons
@@ -107,8 +112,42 @@ public struct ScreenObservation: Sendable {
                 if abs(lhs.frame.minY - rhs.frame.minY) > 6 { return lhs.frame.minY < rhs.frame.minY }
                 return lhs.frame.minX < rhs.frame.minX
             }
-            .map(\.string)
-            .joined(separator: "\n")
+            .enumerated()
+            .map { (id: "t\($0.offset + 1)", text: $0.element) }
+    }
+
+    /// All recognised text, in reading order.
+    public var readableText: String {
+        labeledTextRegions.map(\.text.string).joined(separator: "\n")
+    }
+
+    public func textRegion(withID id: String) -> RecognizedText? {
+        labeledTextRegions.first { $0.id == id }?.text
+    }
+}
+
+/// One command in an application's menu bar.
+///
+/// Menus are how most Mac apps expose their real functionality — File › New, Format › Bold — and
+/// choosing one through Accessibility needs no coordinates and no open menu. It is the most
+/// deterministic way there is to operate an app, which is why the menu bar is read separately from
+/// the window rather than being left for the planner to discover by clicking.
+public struct MenuItem: Sendable, Equatable, Codable {
+    /// Titles from the menu bar down, e.g. `["File", "Export", "PDF…"]`.
+    public let path: [String]
+    public let isEnabled: Bool
+    /// The keyboard shortcut shown beside it, if any, e.g. `⌘N`.
+    public let shortcut: String?
+
+    public init(path: [String], isEnabled: Bool = true, shortcut: String? = nil) {
+        self.path = path
+        self.isEnabled = isEnabled
+        self.shortcut = shortcut
+    }
+
+    /// `File > New`, the form the planner reads and writes.
+    public var displayPath: String {
+        path.joined(separator: " > ")
     }
 }
 
@@ -121,11 +160,47 @@ public struct AccessibilitySnapshot: Sendable, Equatable, Codable {
     /// True when the tree was cut short by the depth or element budget, meaning the agent should
     /// not conclude that a missing control does not exist.
     public let wasTruncated: Bool
+    /// The application's menu bar commands, excluding the Apple menu.
+    public let menuItems: [MenuItem]
 
-    public init(bundleIdentifier: String?, elements: [ElementReference], wasTruncated: Bool = false) {
+    public init(
+        bundleIdentifier: String?,
+        elements: [ElementReference],
+        wasTruncated: Bool = false,
+        menuItems: [MenuItem] = []
+    ) {
         self.bundleIdentifier = bundleIdentifier
         self.elements = elements
         self.wasTruncated = wasTruncated
+        self.menuItems = menuItems
+    }
+
+    /// The menu item a planner's path refers to.
+    ///
+    /// Matched leniently — case, surrounding space, and the trailing ellipsis that marks a command
+    /// opening a dialog are all ignored — because a model writing `File > Save As` for
+    /// `File > Save As…` means exactly that item.
+    public func menuItem(matching requested: [String]) -> MenuItem? {
+        let wanted = requested.map(Self.normalizeMenuTitle)
+        guard !wanted.isEmpty else { return nil }
+        if let exact = menuItems.first(where: { $0.path.map(Self.normalizeMenuTitle) == wanted }) {
+            return exact
+        }
+        // A planner may omit an intermediate submenu, or give only the command's own title when it
+        // is unambiguous. Accept those only if exactly one item fits.
+        let suffixMatches = menuItems.filter { item in
+            let path = item.path.map(Self.normalizeMenuTitle)
+            return path.last == wanted.last && (wanted.count == 1 || path.first == wanted.first)
+        }
+        return suffixMatches.count == 1 ? suffixMatches[0] : nil
+    }
+
+    static func normalizeMenuTitle(_ title: String) -> String {
+        var result = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        for suffix in ["\u{2026}", "..."] where result.hasSuffix(suffix) {
+            result = String(result.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+        }
+        return result
     }
 
     /// The elements worth offering to the planner.

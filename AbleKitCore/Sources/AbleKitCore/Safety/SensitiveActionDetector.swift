@@ -24,6 +24,7 @@ public struct SensitiveActionDetector: Sendable {
         "install", "uninstall", "update", "upgrade", "restart", "shutdown", "reset",
         "confirm", "apply", "accept", "agree", "authorize", "approve", "grant",
         "deactivate", "disable", "revoke", "unsubscribe", "cancel",
+        "quit", "empty trash", "log out", "move to trash",
     ]
 
     /// Words that mean AbleKit should not act autonomously at all.
@@ -39,8 +40,8 @@ public struct SensitiveActionDetector: Sendable {
     /// Classifies an action in the context it will run in.
     public func classify(_ action: DesktopAction, context: DesktopContext? = nil) -> ClassificationResult {
         switch action {
-        case .typeText(let text):
-            return classifyTyping(text, context: context)
+        case .typeText(let text, let field):
+            return classifyTyping(text, into: field, context: context)
 
         case .click(let target), .doubleClick(let target):
             return classifyTarget(target)
@@ -51,6 +52,12 @@ public struct SensitiveActionDetector: Sendable {
                 return .routine
             }
             return classifyTarget(.element(element))
+
+        case .chooseMenuItem(let path):
+            // A menu command is judged by its own title, the same way a button is judged by its
+            // label: File › New is routine, File › Delete is not.
+            guard let title = path.last else { return .routine }
+            return classifyLabel(title)
 
         case .pressKey(let key):
             // Return in a dialog is how most confirmations are accepted.
@@ -76,7 +83,7 @@ public struct SensitiveActionDetector: Sendable {
                 reason: "This sends information to another application."
             )
 
-        case .rightClick, .movePointer, .scroll, .drag, .wait, .openApplication,
+        case .rightClick, .movePointer, .scroll, .drag, .wait, .readScreen, .openApplication,
             .activateApplication, .requestConfirmation, .requestUserInput, .complete, .fail:
             return .routine
         }
@@ -84,11 +91,14 @@ public struct SensitiveActionDetector: Sendable {
 
     // MARK: - Individual judgements
 
-    private func classifyTyping(_ text: String, context: DesktopContext?) -> ClassificationResult {
+    private func classifyTyping(_ text: String, into field: ElementReference?, context: DesktopContext?)
+        -> ClassificationResult
+    {
+        // The field the text will land in: the one named, or else whatever has focus.
+        let destination = field ?? context?.accessibility?.elements.first(where: \.isFocused)
+
         // Typing into a secure field means we are filling in a credential, which AbleKit does not do.
-        if let focused = context?.accessibility?.elements.first(where: \.isFocused),
-            Self.secureRoles.contains(focused.role)
-        {
+        if let destination, Self.secureRoles.contains(destination.role) {
             return ClassificationResult(
                 .restricted,
                 reason: "AbleKit does not type into password fields."
@@ -98,6 +108,15 @@ public struct SensitiveActionDetector: Sendable {
             return ClassificationResult(
                 .restricted,
                 reason: "This text looks like it contains sensitive information (\(matched))."
+            )
+        }
+        // A field labelled as a password or card number is sensitive even if it is not a secure field.
+        if let label = destination?.bestLabel,
+            let matched = Self.matchedKeyword(in: label, from: Self.restrictedKeywords)
+        {
+            return ClassificationResult(
+                .restricted,
+                reason: "\u{201C}\(label)\u{201D} asks for credentials or payment details (\(matched))."
             )
         }
         return .routine
@@ -116,6 +135,10 @@ public struct SensitiveActionDetector: Sendable {
             )
         }
         guard let label = element.bestLabel else { return .routine }
+        return classifyLabel(label)
+    }
+
+    private func classifyLabel(_ label: String) -> ClassificationResult {
         if let matched = Self.matchedKeyword(in: label, from: Self.restrictedKeywords) {
             return ClassificationResult(
                 .restricted,

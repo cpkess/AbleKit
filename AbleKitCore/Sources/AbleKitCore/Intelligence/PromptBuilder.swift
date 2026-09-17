@@ -29,19 +29,23 @@ public struct PromptBuilder: Sendable {
         public var maximumGatheredCharacters: Int
         /// Most characters of selected text or clipboard content.
         public var maximumSnippetCharacters: Int
+        /// Most characters of the menu listing.
+        public var maximumMenuCharacters: Int
 
         public init(
             maximumElements: Int = 40,
-            maximumScreenTextCharacters: Int = 1500,
+            maximumScreenTextCharacters: Int = 2500,
             maximumHistoryEntries: Int = 8,
             maximumGatheredCharacters: Int = 2000,
-            maximumSnippetCharacters: Int = 500
+            maximumSnippetCharacters: Int = 500,
+            maximumMenuCharacters: Int = 1600
         ) {
             self.maximumElements = maximumElements
             self.maximumScreenTextCharacters = maximumScreenTextCharacters
             self.maximumHistoryEntries = maximumHistoryEntries
             self.maximumGatheredCharacters = maximumGatheredCharacters
             self.maximumSnippetCharacters = maximumSnippetCharacters
+            self.maximumMenuCharacters = maximumMenuCharacters
         }
 
         public static let `default` = Budget()
@@ -77,11 +81,13 @@ public struct PromptBuilder: Sendable {
         opening a web address are done directly. Do not click a control merely because one is listed.
         4. Does it need something only the user knows? Then ask them.
         5. Is it impossible? Then fail, and say why.
-        6. Otherwise, operate the interface: act on a listed control by its id, and use a screen \
-        position only when no listed control fits.
+        6. Otherwise, operate the interface. Prefer, in order: a command listed under MENUS; a \
+        control listed under CONTROLS, by its id; a keyboard shortcut; and only then a screen position.
 
         Always:
         - Do exactly one step. You will see the result and be asked again.
+        - If the controls and menus do not show what you need — a document's content, a list drawn \
+        by the app — use readScreen, and the text on screen will be listed next time.
         - Fill in every field your step needs: typeText needs the text, askCopilot and askUser need \
         the question, openApplication needs the name.
         - Prefer the least risky action that makes progress. Never guess at a destructive step.
@@ -103,9 +109,14 @@ public struct PromptBuilder: Sendable {
           kind: openApplication, applicationName: "Safari"
           The name is always filled in.
 
+        Goal: "Start a new document", with File: New listed under MENUS.
+          kind: chooseMenuItem, text: "File > New"
+          A menu command is the most reliable way to do something an app offers.
+
         Goal: "Change the status to Amber", with [e2] text field "Status" listed.
-          kind: clickElement, elementID: "e2"
-          A listed control is named by its id, never by its position.
+          kind: typeText, elementID: "e2", text: "Amber"
+          Name the field when typing; AbleKit puts the cursor there first. A listed control is \
+        always named by its id, never by its position.
         """
 
     /// The standing instructions given to the verifier.
@@ -129,6 +140,10 @@ public struct PromptBuilder: Sendable {
 
         if let elements = describeElements(context.desktop) {
             sections.append(elements)
+        }
+
+        if let menus = describeMenus(context.desktop) {
+            sections.append(menus)
         }
 
         if let screenText = describeScreenText(context.desktop) {
@@ -270,14 +285,57 @@ public struct PromptBuilder: Sendable {
         return "  " + parts.joined(separator: " ")
     }
 
+    /// The app's menu commands, grouped by menu and trimmed to the budget.
+    ///
+    /// Disabled commands are left out: they cannot be chosen, and every one listed is one fewer
+    /// that fits. Shortcuts are left out too — choosing the command is more reliable than pressing
+    /// its keys, so there is no reason to spend the space.
+    private func describeMenus(_ context: DesktopContext) -> String? {
+        guard let items = context.accessibility?.menuItems.filter(\.isEnabled), !items.isEmpty else {
+            return nil
+        }
+        var order: [String] = []
+        var grouped: [String: [String]] = [:]
+        for item in items {
+            guard let menu = item.path.first else { continue }
+            if grouped[menu] == nil { order.append(menu) }
+            grouped[menu, default: []].append(item.path.dropFirst().joined(separator: " > "))
+        }
+
+        var lines = ["MENUS (use chooseMenuItem with the full path, e.g. \"File > New\"):"]
+        var used = lines[0].count
+        for menu in order {
+            let line = "  \(menu): " + (grouped[menu] ?? []).joined(separator: ", ")
+            guard used + line.count <= budget.maximumMenuCharacters else {
+                lines.append("  \u{2026} more menus not listed.")
+                break
+            }
+            lines.append(line)
+            used += line.count
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Text read from the pixels, each piece with an id the planner can click.
+    ///
+    /// Positions are given too: they let the planner reason about layout ("the button to the right
+    /// of the name"), and they are what the decoder clicks when a `t` id is chosen.
     private func describeScreenText(_ context: DesktopContext) -> String? {
         guard let screen = context.screen, !screen.textRegions.isEmpty else { return nil }
-        let text = screen.readableText.truncated(to: budget.maximumScreenTextCharacters)
-        guard !text.trimmed.isEmpty else { return nil }
-        return """
-            SCREEN TEXT (read from the pixels; use only when no control above fits):
-            \(text)
-            """
+        var lines = [
+            "SCREEN TEXT (read from the pixels; click one with clickElement and its t id, only when no control or menu fits):"
+        ]
+        var used = 0
+        for (id, region) in screen.labeledTextRegions {
+            let line = "  [\(id)] \(region.string.truncated(to: 60).quoted) at (\(Int(region.frame.midX)), \(Int(region.frame.midY)))"
+            guard used + line.count <= budget.maximumScreenTextCharacters else {
+                lines.append("  \u{2026} more text not listed.")
+                break
+            }
+            lines.append(line)
+            used += line.count
+        }
+        return lines.count > 1 ? lines.joined(separator: "\n") : nil
     }
 
     private func describeGathered(_ information: [GatheredInformation]) -> String? {

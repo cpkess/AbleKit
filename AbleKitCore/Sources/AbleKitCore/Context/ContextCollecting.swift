@@ -14,6 +14,9 @@ public struct ContextCollectionOptions: Sendable, Equatable {
     public var includesScreenText: Bool
     /// Read the current selection and the clipboard.
     public var includesUserContent: Bool
+    /// Read the application's menu bar. Skipped for verification, which only needs to see what
+    /// changed in the window.
+    public var includesMenus: Bool
     /// Cap on Accessibility elements, to bound both the work and the prompt.
     public var maximumElements: Int
     /// How deep to walk the Accessibility tree.
@@ -24,6 +27,7 @@ public struct ContextCollectionOptions: Sendable, Equatable {
         includesScreenshot: Bool = false,
         includesScreenText: Bool = false,
         includesUserContent: Bool = true,
+        includesMenus: Bool = true,
         maximumElements: Int = 300,
         maximumDepth: Int = 12
     ) {
@@ -31,6 +35,7 @@ public struct ContextCollectionOptions: Sendable, Equatable {
         self.includesScreenshot = includesScreenshot
         self.includesScreenText = includesScreenText || includesScreenshot && includesScreenText
         self.includesUserContent = includesUserContent
+        self.includesMenus = includesMenus
         self.maximumElements = maximumElements
         self.maximumDepth = maximumDepth
     }
@@ -59,6 +64,7 @@ public struct ContextCollectionOptions: Sendable, Equatable {
         includesScreenshot: false,
         includesScreenText: false,
         includesUserContent: false,
+        includesMenus: false,
         maximumElements: 120,
         maximumDepth: 8
     )

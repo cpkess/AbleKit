@@ -102,7 +102,8 @@ public struct ContextCollector: ContextCollecting {
                     processIdentifier: processIdentifier,
                     bundleIdentifier: application.bundleIdentifier,
                     maximumElements: options.maximumElements,
-                    maximumDepth: options.maximumDepth
+                    maximumDepth: options.maximumDepth,
+                    includesMenus: options.includesMenus
                 )
                 reading.window = service.focusedWindow(
                     processIdentifier: processIdentifier,

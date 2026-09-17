@@ -8,9 +8,15 @@ import Foundation
 /// description that stays true when the window moves and that can be re-resolved after the
 /// interface changes.
 public struct ElementReference: Sendable, Equatable, Codable, Identifiable {
-    /// Identifier assigned when the snapshot was taken. Stable only within one snapshot: it
-    /// encodes the element's path through the tree, so it must be re-resolved after the UI changes.
+    /// A short identifier assigned when the snapshot was taken — `e1`, `e2`, … in walk order.
+    ///
+    /// Short on purpose: the planner has to copy it back exactly, and a small model copying
+    /// `e0-12-3-1-4-2` gets it wrong often enough to matter. Stable only within one snapshot.
     public let id: String
+    /// Where the element sits in the tree, as child indexes from the window (`0-12-3-1`), used to
+    /// find the live element again at execution time. Separate from `id` so the planner never
+    /// has to handle it.
+    public let treePath: String?
     /// The Accessibility role, e.g. `AXButton`.
     public let role: String
     /// A more specific subrole where the app provides one, e.g. `AXCloseButton`.
@@ -36,6 +42,7 @@ public struct ElementReference: Sendable, Equatable, Codable, Identifiable {
 
     public init(
         id: String,
+        treePath: String? = nil,
         role: String,
         subrole: String? = nil,
         title: String? = nil,
@@ -49,6 +56,7 @@ public struct ElementReference: Sendable, Equatable, Codable, Identifiable {
         parentID: String? = nil
     ) {
         self.id = id
+        self.treePath = treePath
         self.role = role
         self.subrole = subrole
         self.title = title

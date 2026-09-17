@@ -14,10 +14,13 @@ public struct PlannedStepDecoder: Sendable {
     public init() {}
 
     /// Decodes a draft against the desktop it was planned for.
-    public func decode(_ draft: PlannedStepDraft, context: DesktopContext) throws(IntelligenceError)
-        -> PlannedStep
+    ///
+    /// - Parameter goal: The user's goal, used where the model left out text the step needs and the
+    ///   goal itself is a reasonable stand-in.
+    public func decode(_ draft: PlannedStepDraft, context: DesktopContext, goal: String? = nil)
+        throws(IntelligenceError) -> PlannedStep
     {
-        let action = try self.action(for: draft, context: context)
+        let action = try self.action(for: draft, context: context, goal: goal)
         return PlannedStep(
             action: action,
             rationale: draft.rationale.trimmed.isEmpty ? action.summary : draft.rationale.trimmed,
@@ -25,8 +28,8 @@ public struct PlannedStepDecoder: Sendable {
         )
     }
 
-    private func action(for draft: PlannedStepDraft, context: DesktopContext) throws(IntelligenceError)
-        -> DesktopAction
+    private func action(for draft: PlannedStepDraft, context: DesktopContext, goal: String?)
+        throws(IntelligenceError) -> DesktopAction
     {
         switch draft.kind {
         case .openApplication:
@@ -35,14 +38,17 @@ public struct PlannedStepDecoder: Sendable {
             }
             return .openApplication(ApplicationReference(name: name))
 
+        case .chooseMenuItem:
+            return .chooseMenuItem(path: try resolveMenuItem(draft, context: context))
+
         case .clickElement:
-            return .click(target: .element(try resolveElement(draft, context: context)))
+            return .click(target: try resolveTarget(draft, context: context))
 
         case .doubleClickElement:
-            return .doubleClick(target: .element(try resolveElement(draft, context: context)))
+            return .doubleClick(target: try resolveTarget(draft, context: context))
 
         case .rightClickElement:
-            return .rightClick(target: .element(try resolveElement(draft, context: context)))
+            return .rightClick(target: try resolveTarget(draft, context: context))
 
         case .clickPosition:
             guard let x = draft.x, let y = draft.y else {
@@ -54,7 +60,7 @@ public struct PlannedStepDecoder: Sendable {
             guard let text = draft.text, !text.isEmpty else {
                 throw .undecodableStep("typeText needs the text to type.")
             }
-            return .typeText(text)
+            return .typeText(text, into: try typingDestination(draft, context: context))
 
         case .pressKey:
             guard let name = draft.keyName else {
@@ -89,7 +95,12 @@ public struct PlannedStepDecoder: Sendable {
             return .nativeAction(.openURL(Self.normalizeURL(text)))
 
         case .askCopilot:
-            guard let prompt = draft.text?.trimmed, !prompt.isEmpty else {
+            // The on-device model reliably chooses askCopilot for a Copilot goal and then, just as
+            // reliably, leaves the question out. The user's own goal is a fair question to send in
+            // that case — and it is safe to, because a bridge handoff is always shown in full and
+            // confirmed before anything leaves the machine.
+            let prompt = (draft.text?.trimmed).flatMap { $0.isEmpty ? nil : $0 } ?? goal?.trimmed
+            guard let prompt, !prompt.isEmpty else {
                 throw .undecodableStep("askCopilot needs a question.")
             }
             return .askAIBridge(bridge: .copilot, prompt: prompt)
@@ -99,6 +110,9 @@ public struct PlannedStepDecoder: Sendable {
             // failing the step would waste a planning turn on it.
             let seconds = min(max(draft.waitSeconds ?? 1, 0.1), 10)
             return .wait(seconds: seconds)
+
+        case .readScreen:
+            return .readScreen
 
         case .askUser:
             guard let question = draft.text?.trimmed, !question.isEmpty else {
@@ -116,7 +130,67 @@ public struct PlannedStepDecoder: Sendable {
         }
     }
 
+    // MARK: - Resolving menu commands
+
+    /// Turns `File > New` into the exact titles of a command the app actually has.
+    ///
+    /// The planner's spelling is checked against the menu bar rather than trusted, so a command
+    /// that does not exist, or is greyed out, costs one re-plan instead of a failed action.
+    private func resolveMenuItem(_ draft: PlannedStepDraft, context: DesktopContext)
+        throws(IntelligenceError) -> [String]
+    {
+        // Models put the path in whichever field feels natural; both are accepted.
+        let raw = (draft.text?.trimmed).flatMap { $0.isEmpty ? nil : $0 } ?? draft.elementID?.trimmed ?? ""
+        let requested = Self.parseMenuPath(raw)
+        guard !requested.isEmpty else {
+            throw .undecodableStep("chooseMenuItem needs the command, such as File > New, in the text.")
+        }
+        guard let menus = context.accessibility, !menus.menuItems.isEmpty else {
+            throw .undecodableStep("This app's menus could not be read; use a control or a shortcut instead.")
+        }
+        guard let item = menus.menuItem(matching: requested) else {
+            throw .undecodableStep(
+                "There is no menu command \(requested.joined(separator: " > ").quoted). Pick one listed under MENUS."
+            )
+        }
+        guard item.isEnabled else {
+            throw .undecodableStep("\(item.displayPath.quoted) is greyed out right now.")
+        }
+        return item.path
+    }
+
+    /// Splits a menu path written any of the ways a person might: `File > New`, `File › New`,
+    /// `File/New`, `File -> New`.
+    static func parseMenuPath(_ raw: String) -> [String] {
+        var text = raw
+        for separator in ["->", "\u{203A}", "\u{2192}", " / "] {
+            text = text.replacingOccurrences(of: separator, with: ">")
+        }
+        return text.split(separator: ">")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
     // MARK: - Resolving elements
+
+    /// What a click should aim at: a control, or a piece of recognised screen text.
+    ///
+    /// Text ids (`t4`) resolve to the centre of that text on screen. The router may still upgrade the
+    /// click to an Accessibility press if a control turns out to sit at that position.
+    private func resolveTarget(_ draft: PlannedStepDraft, context: DesktopContext)
+        throws(IntelligenceError) -> PointerTarget
+    {
+        let raw = draft.elementID?.trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) ?? ""
+        if raw.hasPrefix("t"), Int(raw.dropFirst()) != nil {
+            guard let region = context.screen?.textRegion(withID: raw) else {
+                throw .undecodableStep(
+                    "There is no screen text \(raw.quoted) now. Look at the current list and pick another."
+                )
+            }
+            return .point(region.frame.center)
+        }
+        return .element(try resolveElement(draft, context: context))
+    }
 
     /// Finds the element a draft refers to.
     ///
@@ -144,6 +218,29 @@ public struct PlannedStepDecoder: Sendable {
         throw .undecodableStep(
             "There is no control \(identifier.quoted) on screen now. Look at the current list and pick another."
         )
+    }
+
+    /// The field a typeText step names, if it names one.
+    ///
+    /// Typing without one is refused when the window has text fields but none of them has focus:
+    /// the text would land wherever the cursor happened to be, which on the real model's first try
+    /// was exactly what it planned. Windows with no readable fields — a canvas, a terminal — are
+    /// allowed through, since there is no field to name.
+    private func typingDestination(_ draft: PlannedStepDraft, context: DesktopContext)
+        throws(IntelligenceError) -> ElementReference?
+    {
+        if draft.elementID?.trimmed.isEmpty == false {
+            return try resolveElement(draft, context: context)
+        }
+        let elements = context.accessibility?.elements ?? []
+        let hasFocusedInput = elements.contains { $0.isFocused && $0.isTextInput }
+        let hasInputs = elements.contains { $0.isTextInput && $0.isEnabled }
+        if hasInputs && !hasFocusedInput {
+            throw .undecodableStep(
+                "No field has focus, so the text would go nowhere useful. Put the id of the field to type into in elementID."
+            )
+        }
+        return nil
     }
 
     /// Where to aim a scroll.

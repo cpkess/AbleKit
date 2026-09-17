@@ -71,13 +71,19 @@ public struct ActionValidator: Sendable {
             try validate(target: from)
             try validate(target: to)
 
-        case .typeText(let text):
+        case .typeText(let text, let field):
             guard !text.isEmpty else { throw .emptyPayload("The text to type") }
+            if let field { try validate(target: .element(field)) }
 
         case .accessibilityAction(let element, let axAction):
             try validate(target: .element(element))
             guard element.actions.contains(axAction) else {
                 throw .unsupportedAccessibilityAction(element: element.description, action: axAction)
+            }
+
+        case .chooseMenuItem(let path):
+            guard !path.isEmpty, path.allSatisfy({ !$0.trimmed.isEmpty }) else {
+                throw .emptyPayload("The menu path")
             }
 
         case .wait(let seconds):
@@ -92,7 +98,7 @@ public struct ActionValidator: Sendable {
         case .nativeAction(let operation):
             try validate(operation)
 
-        case .pressKey, .hotkey, .complete, .fail:
+        case .pressKey, .hotkey, .readScreen, .complete, .fail:
             break
         }
     }

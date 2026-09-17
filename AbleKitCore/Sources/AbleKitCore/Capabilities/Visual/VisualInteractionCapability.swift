@@ -12,15 +12,18 @@ public struct VisualInteractionCapability: Capability {
 
     private let mouse: MouseController
     private let keyboard: KeyboardController
+    private let accessibility: AccessibilityService
     private let permissions: any PermissionChecking
 
     public init(
         mouse: MouseController = MouseController(),
         keyboard: KeyboardController = KeyboardController(),
+        accessibility: AccessibilityService = AccessibilityService(),
         permissions: any PermissionChecking = SystemPermissionChecker()
     ) {
         self.mouse = mouse
         self.keyboard = keyboard
+        self.accessibility = accessibility
         self.permissions = permissions
     }
 
@@ -57,7 +60,10 @@ public struct VisualInteractionCapability: Capability {
             try mouse.scroll(at: target.resolvedPoint, deltaX: deltaX, deltaY: deltaY)
         case .drag(let from, let to):
             try mouse.drag(from: from.resolvedPoint, to: to.resolvedPoint)
-        case .typeText(let text):
+        case .typeText(let text, let field):
+            if let field, !field.isFocused {
+                try await focus(field, context: context)
+            }
             try keyboard.type(text)
         case .pressKey(let key):
             try keyboard.press(key)
@@ -68,5 +74,21 @@ public struct VisualInteractionCapability: Capability {
         }
 
         return .success(action.summary)
+    }
+
+    /// Puts the keyboard focus in a field before typing into it.
+    ///
+    /// Accessibility focus is tried first, since it needs no pointer movement; plenty of fields
+    /// refuse it, though, so a click on the field is the fallback. A short pause follows either
+    /// way — fields commonly take a moment to become ready for input after gaining focus.
+    private func focus(_ field: ElementReference, context: DesktopContext?) async throws {
+        var focused = false
+        if let processIdentifier = context?.frontmostApplication?.processIdentifier {
+            focused = (try? accessibility.focus(field, processIdentifier: processIdentifier)) != nil
+        }
+        if !focused {
+            try mouse.click(at: field.frame.center)
+        }
+        try await Task.sleep(for: .milliseconds(150))
     }
 }

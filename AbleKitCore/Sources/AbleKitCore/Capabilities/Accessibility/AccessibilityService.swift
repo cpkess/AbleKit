@@ -39,7 +39,8 @@ public struct AccessibilityService: Sendable {
         processIdentifier: pid_t,
         bundleIdentifier: String?,
         maximumElements: Int = 300,
-        maximumDepth: Int = 12
+        maximumDepth: Int = 12,
+        includesMenus: Bool = true
     ) -> AccessibilitySnapshot {
         let application = AXUIElementCreateApplication(processIdentifier)
         AXUIElementSetMessagingTimeout(application, Self.messagingTimeout)
@@ -70,8 +71,129 @@ public struct AccessibilityService: Sendable {
         return AccessibilitySnapshot(
             bundleIdentifier: bundleIdentifier,
             elements: elements,
-            wasTruncated: truncated
+            wasTruncated: truncated,
+            menuItems: includesMenus ? Self.menuItems(of: application) : []
         )
+    }
+
+    // MARK: - Menus
+
+    /// How many commands to read from the menu bar. Enough for any ordinary app, bounded so that an
+    /// IDE's several hundred commands cannot swamp the prompt or stall a step.
+    static let maximumMenuItems = 250
+
+    /// Reads the application's menu bar into a flat list of commands.
+    ///
+    /// The Apple menu is skipped: it belongs to the system, not the app, and choosing from it is
+    /// never what a task about the app means. Separators, and the dynamic items macOS adds to
+    /// every app (Services, and the like), are left out too.
+    static func menuItems(of application: AXUIElement) -> [MenuItem] {
+        guard let menuBar = copyElement(application, kAXMenuBarAttribute) else { return [] }
+        var items: [MenuItem] = []
+        for barItem in children(of: menuBar).dropFirst() {
+            guard let title = copyString(barItem, kAXTitleAttribute) else { continue }
+            for menu in children(of: barItem) {
+                collectMenuItems(menu, path: [title], depth: 0, into: &items)
+            }
+            if items.count >= maximumMenuItems { break }
+        }
+        return Array(items.prefix(maximumMenuItems))
+    }
+
+    private static let ignoredMenuTitles: Set<String> = ["Services"]
+
+    private static func collectMenuItems(
+        _ menu: AXUIElement,
+        path: [String],
+        depth: Int,
+        into items: inout [MenuItem]
+    ) {
+        guard depth < 3, items.count < maximumMenuItems else { return }
+        for item in children(of: menu) {
+            guard let title = copyString(item, kAXTitleAttribute),
+                !ignoredMenuTitles.contains(title)
+            else { continue }
+            let itemPath = path + [title]
+            let submenus = children(of: item)
+            if submenus.isEmpty {
+                items.append(
+                    MenuItem(
+                        path: itemPath,
+                        isEnabled: copyBool(item, kAXEnabledAttribute) ?? true,
+                        shortcut: shortcut(of: item)
+                    )
+                )
+            } else {
+                for submenu in submenus {
+                    collectMenuItems(submenu, path: itemPath, depth: depth + 1, into: &items)
+                }
+            }
+        }
+    }
+
+    /// The shortcut shown beside a menu item, rendered the way the menu shows it (`⇧⌘S`).
+    private static func shortcut(of item: AXUIElement) -> String? {
+        guard let character = copyString(item, "AXMenuItemCmdChar") else { return nil }
+        var value: CFTypeRef?
+        var modifiers = 0
+        if AXUIElementCopyAttributeValue(item, "AXMenuItemCmdModifiers" as CFString, &value) == .success,
+            let number = value as? Int
+        {
+            modifiers = number
+        }
+        // AXMenuItemCmdModifiers: bit 0 shift, bit 1 option, bit 2 control, bit 3 means NO command.
+        var symbols = ""
+        if modifiers & 4 != 0 { symbols += "\u{2303}" }
+        if modifiers & 2 != 0 { symbols += "\u{2325}" }
+        if modifiers & 1 != 0 { symbols += "\u{21E7}" }
+        if modifiers & 8 == 0 { symbols += "\u{2318}" }
+        return symbols + character
+    }
+
+    /// Chooses a menu command by its titles, without opening the menu.
+    ///
+    /// `AXPress` on a menu item runs its command directly, exactly as if it had been chosen, so no
+    /// menu flashes open and nothing depends on where the menu bar is drawn.
+    public func chooseMenuItem(_ path: [String], processIdentifier: pid_t) throws(CapabilityError) {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        AXUIElementSetMessagingTimeout(application, Self.messagingTimeout)
+        guard let menuBar = Self.copyElement(application, kAXMenuBarAttribute) else {
+            throw .executionFailed("This app has no menu bar AbleKit can read.")
+        }
+        guard !path.isEmpty else { throw .executionFailed("No menu command was named.") }
+
+        var current: AXUIElement = menuBar
+        for (depth, title) in path.enumerated() {
+            let wanted = AccessibilitySnapshot.normalizeMenuTitle(title)
+            // Below the menu bar, each item's children are a single AXMenu holding the entries.
+            let candidates = depth == 0
+                ? Self.children(of: current)
+                : Self.children(of: current).flatMap { Self.children(of: $0) }
+            guard
+                let match = candidates.first(where: { candidate in
+                    guard let candidateTitle = Self.copyString(candidate, kAXTitleAttribute) else {
+                        return false
+                    }
+                    return AccessibilitySnapshot.normalizeMenuTitle(candidateTitle) == wanted
+                })
+            else {
+                let shown = path.prefix(depth + 1).joined(separator: " \u{203A} ")
+                throw .executionFailed("There is no menu command \u{201C}\(shown)\u{201D}.")
+            }
+            current = match
+        }
+
+        if Self.copyBool(current, kAXEnabledAttribute) == false {
+            throw .executionFailed(
+                "\u{201C}\(path.joined(separator: " \u{203A} "))\u{201D} is not available right now."
+            )
+        }
+        let result = AXUIElementPerformAction(current, kAXPressAction as CFString)
+        guard result == .success else {
+            throw .executionFailed(
+                "\u{201C}\(path.joined(separator: " \u{203A} "))\u{201D} could not be chosen (\(Self.describe(result)))."
+            )
+        }
     }
 
     /// The text currently selected in the frontmost application, if it exposes any.
@@ -222,9 +344,10 @@ public struct AccessibilityService: Sendable {
         }
         guard let role = copyString(element, kAXRoleAttribute) else { return }
 
-        let identifier = Self.identifier(for: path)
+        let identifier = "e\(elements.count + 1)"
         let reference = ElementReference(
             id: identifier,
+            treePath: Self.treePath(for: path),
             role: role,
             subrole: copyString(element, kAXSubroleAttribute),
             title: copyString(element, kAXTitleAttribute),
@@ -264,19 +387,18 @@ public struct AccessibilityService: Sendable {
         }
     }
 
-    /// An element's identity within a snapshot, encoding its path from the root.
+    /// An element's position in the tree, as the child indexes leading to it from the window.
     ///
-    /// The path is what makes a reference re-resolvable: given `e0-3-1`, the live tree can be
-    /// walked back down to the same place without holding onto a handle across a suspension point.
-    static func identifier(for path: [Int]) -> String {
-        path.isEmpty ? "e0" : "e" + path.map(String.init).joined(separator: "-")
+    /// This is what makes a reference re-resolvable: given `0-3-1`, the live tree can be walked back
+    /// down to the same place without holding onto a handle across a suspension point. The window
+    /// itself is the empty path.
+    static func treePath(for path: [Int]) -> String {
+        path.map(String.init).joined(separator: "-")
     }
 
-    static func path(from identifier: String) -> [Int]? {
-        guard identifier.hasPrefix("e") else { return nil }
-        let body = identifier.dropFirst()
-        if body == "0" { return [] }
-        let components = body.split(separator: "-").map { Int($0) }
+    static func path(fromTreePath treePath: String) -> [Int]? {
+        guard !treePath.isEmpty else { return [] }
+        let components = treePath.split(separator: "-").map { Int($0) }
         guard !components.contains(where: { $0 == nil }) else { return nil }
         return components.compactMap { $0 }
     }
@@ -296,7 +418,7 @@ public struct AccessibilityService: Sendable {
             ?? copyElement(application, kAXMainWindowAttribute)
             ?? application
 
-        if let path = path(from: reference.id),
+        if let treePath = reference.treePath, let path = path(fromTreePath: treePath),
             let candidate = element(at: path, from: root),
             matches(candidate, reference)
         {

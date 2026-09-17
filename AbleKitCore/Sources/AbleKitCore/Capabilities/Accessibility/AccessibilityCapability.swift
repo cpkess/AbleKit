@@ -22,16 +22,19 @@ public struct AccessibilityCapability: Capability {
 
     public func canHandle(_ action: DesktopAction) -> Bool {
         guard permissions.status(of: .accessibility).isGranted else { return false }
-        guard case .accessibilityAction(let element, let axAction) = action else { return false }
-        return element.actions.contains(axAction)
+        switch action {
+        case .accessibilityAction(let element, let axAction):
+            return element.actions.contains(axAction)
+        case .chooseMenuItem:
+            return true
+        default:
+            return false
+        }
     }
 
     public func execute(_ action: DesktopAction, context: DesktopContext?) async throws
         -> CapabilityOutcome
     {
-        guard case .accessibilityAction(let element, let axAction) = action else {
-            throw CapabilityError.noCapability(action.summary)
-        }
         guard permissions.status(of: .accessibility).isGranted else {
             throw CapabilityError.permissionRequired(.accessibility)
         }
@@ -39,19 +42,36 @@ public struct AccessibilityCapability: Capability {
             throw CapabilityError.executionFailed("There is no frontmost application to act on.")
         }
 
-        // Accessibility calls are synchronous IPC into another process and can block for as long
-        // as the messaging timeout, so they are moved off whatever actor is driving the agent.
-        try await withCheckedThrowingContinuation { continuation in
+        switch action {
+        case .accessibilityAction(let element, let axAction):
+            try await offMainActor {
+                try service.perform(axAction, on: element, processIdentifier: processIdentifier)
+            }
+            return .success("Performed \(axAction) on \(element.description).")
+
+        case .chooseMenuItem(let path):
+            try await offMainActor {
+                try service.chooseMenuItem(path, processIdentifier: processIdentifier)
+            }
+            return .success("Chose \(path.joined(separator: " \u{203A} ")).")
+
+        default:
+            throw CapabilityError.noCapability(action.summary)
+        }
+    }
+
+    /// Accessibility calls are synchronous IPC into another process and can block for as long as the
+    /// messaging timeout, so they are moved off whatever actor is driving the agent.
+    private func offMainActor(_ work: @escaping @Sendable () throws -> Void) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             Task.detached(priority: .userInitiated) {
                 do {
-                    try service.perform(axAction, on: element, processIdentifier: processIdentifier)
+                    try work()
                     continuation.resume()
                 } catch {
                     continuation.resume(throwing: error)
                 }
             }
         }
-
-        return .success("Performed \(axAction) on \(element.description).")
     }
 }

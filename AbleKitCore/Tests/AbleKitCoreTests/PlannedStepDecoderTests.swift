@@ -74,6 +74,16 @@ struct PlannedStepDecoderTests {
         }
     }
 
+    @Test("A Copilot step with no question falls back to the user's goal")
+    func copilotFallsBackToGoal() throws {
+        let step = try decoder.decode(
+            PlannedStepDraft(kind: .askCopilot, rationale: "ask"),
+            context: context,
+            goal: "Ask Copilot what the risks are"
+        )
+        #expect(step.action == .askAIBridge(bridge: .copilot, prompt: "Ask Copilot what the risks are"))
+    }
+
     @Test("A hotkey becomes a key plus modifiers")
     func decodesHotkey() throws {
         let draft = PlannedStepDraft(

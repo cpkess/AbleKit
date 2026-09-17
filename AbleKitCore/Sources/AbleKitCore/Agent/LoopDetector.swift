@@ -74,7 +74,9 @@ public struct LoopDetector: Sendable {
         case .drag(let from, let to): "drag:\(signature(for: from))->\(signature(for: to))"
         case .accessibilityAction(let element, let axAction):
             "ax:\(axAction):\(signature(for: .element(element)))"
-        case .typeText(let text): "type:\(text)"
+        case .chooseMenuItem(let path): "menu:\(path.joined(separator: ">"))"
+        case .typeText(let text, let field):
+            "type:\(text)\(field.map { "@" + signature(for: .element($0)) } ?? "")"
         case .pressKey(let key): "key:\(key.displayName)"
         case .hotkey(let key, let modifiers):
             "hotkey:\(modifiers.map(\.rawValue).sorted().joined(separator: "+"))+\(key.displayName)"
@@ -83,6 +85,7 @@ public struct LoopDetector: Sendable {
         case .nativeAction(let operation): "native:\(operation.summary)"
         case .askAIBridge(let bridge, let prompt): "bridge:\(bridge.rawValue):\(prompt)"
         case .wait(let seconds): "wait:\(seconds)"
+        case .readScreen: "readScreen"
         case .requestConfirmation(let prompt): "confirm:\(prompt)"
         case .requestUserInput(let prompt): "input:\(prompt)"
         case .complete(let summary): "complete:\(summary)"

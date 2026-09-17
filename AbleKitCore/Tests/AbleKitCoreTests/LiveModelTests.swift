@@ -234,4 +234,81 @@ struct LiveModelTests {
             return
         }
     }
+
+    private func textEditDesktop(screenText: [RecognizedText] = [], elements: [ElementReference] = [])
+        -> DesktopContext
+    {
+        DesktopContext(
+            frontmostApplication: RunningApplicationInfo(
+                bundleIdentifier: "com.apple.TextEdit", localizedName: "TextEdit",
+                processIdentifier: 700, isActive: true
+            ),
+            focusedWindow: WindowInfo(
+                title: "Untitled", owningApplication: "TextEdit",
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600), isFocused: true
+            ),
+            accessibility: AccessibilitySnapshot(
+                bundleIdentifier: "com.apple.TextEdit",
+                elements: elements,
+                menuItems: [
+                    MenuItem(path: ["File", "New"]), MenuItem(path: ["File", "Open\u{2026}"]),
+                    MenuItem(path: ["File", "Save\u{2026}"]), MenuItem(path: ["Edit", "Select All"]),
+                    MenuItem(path: ["Edit", "Copy"]), MenuItem(path: ["Format", "Font", "Bold"]),
+                    MenuItem(path: ["Format", "Font", "Italic"]),
+                    MenuItem(path: ["Format", "Make Plain Text"]),
+                ]
+            ),
+            screen: screenText.isEmpty ? nil : ScreenObservation(
+                image: nil,
+                geometry: CaptureGeometry(
+                    region: CGRect(x: 0, y: 0, width: 800, height: 600),
+                    pixelSize: CGSize(width: 1600, height: 1200)
+                ),
+                textRegions: screenText
+            ),
+            arrangement: .fixture()
+        )
+    }
+
+    @Test("An app command is planned as a menu choice")
+    func plansMenuCommand() async throws {
+        let step = try await plan("Create a new TextEdit document", desktop: textEditDesktop())
+        #expect(step.action == .chooseMenuItem(path: ["File", "New"]), "got \(step.action) — \(step.rationale)")
+    }
+
+    @Test("Formatting is planned through the Format menu")
+    func plansNestedMenuCommand() async throws {
+        let step = try await plan("Make the selected text bold", desktop: textEditDesktop())
+        #expect(
+            step.action == .chooseMenuItem(path: ["Format", "Font", "Bold"])
+                || step.action == .hotkey(key: .character("b"), modifiers: [.command]),
+            "got \(step.action) — \(step.rationale)"
+        )
+    }
+
+    @Test("Text found only on screen can be clicked by its id")
+    func plansClickOnScreenText() async throws {
+        let desktop = textEditDesktop(screenText: [
+            RecognizedText(string: "Welcome", confidence: 0.9, frame: CGRect(x: 100, y: 80, width: 120, height: 30)),
+            RecognizedText(string: "Get Started", confidence: 0.9, frame: CGRect(x: 340, y: 400, width: 120, height: 30)),
+        ])
+        let step = try await plan("Click Get Started", desktop: desktop)
+        #expect(
+            step.action == .click(target: .point(CGPoint(x: 400, y: 415))),
+            "got \(step.action) — \(step.rationale)"
+        )
+    }
+
+    @Test("Typing names the field it is meant for")
+    func focusesBeforeTyping() async throws {
+        let field = ElementReference(
+            id: "e4", role: "AXTextField", title: "Name",
+            frame: CGRect(x: 100, y: 100, width: 300, height: 24)
+        )
+        let step = try await plan("Type Chris into the Name field", desktop: textEditDesktop(elements: [field]))
+        #expect(
+            step.action == .typeText("Chris", into: field) || step.action == .click(target: .element(field)),
+            "got \(step.action) — \(step.rationale)"
+        )
+    }
 }

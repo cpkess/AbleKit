@@ -99,13 +99,20 @@ public enum DesktopAction: Sendable, Equatable, Codable {
     case doubleClick(target: PointerTarget)
     case rightClick(target: PointerTarget)
     case movePointer(to: PointerTarget)
-    case typeText(String)
+    /// Types text. When a field is given, it is given keyboard focus first, so the text cannot land
+    /// wherever the cursor happened to be.
+    case typeText(String, into: ElementReference? = nil)
     case pressKey(Key)
     case hotkey(key: Key, modifiers: [ModifierKey])
     case scroll(target: PointerTarget, deltaX: Int, deltaY: Int)
     case drag(from: PointerTarget, to: PointerTarget)
     case wait(seconds: Double)
+    /// Reads the screen's pixels on the next observation, for apps whose controls do not show
+    /// everything that is on screen. Touches nothing.
+    case readScreen
     case accessibilityAction(element: ElementReference, action: String)
+    /// Chooses a command from the frontmost application's menu bar, by its titles.
+    case chooseMenuItem(path: [String])
     case nativeAction(NativeOperation)
     case askAIBridge(bridge: AIBridgeIdentifier, prompt: String)
     case requestConfirmation(prompt: String)
@@ -127,15 +134,22 @@ extension DesktopAction {
         case .doubleClick(let target): "Double-clicking \(target.description)"
         case .rightClick(let target): "Right-clicking \(target.description)"
         case .movePointer(let target): "Moving pointer to \(target.description)"
-        case .typeText(let text): "Typing \(text.truncated(to: 40).quoted)"
+        case .typeText(let text, let field):
+            if let field {
+                "Typing \(text.truncated(to: 40).quoted) into \(field.description)"
+            } else {
+                "Typing \(text.truncated(to: 40).quoted)"
+            }
         case .pressKey(let key): "Pressing \(key.displayName)"
         case .hotkey(let key, let modifiers):
             "Pressing \((modifiers.map(\.symbol) + [key.displayName]).joined())"
         case .scroll(_, let x, let y): "Scrolling \(Self.scrollDescription(deltaX: x, deltaY: y))"
         case .drag(let from, let to): "Dragging \(from.description) to \(to.description)"
         case .wait(let seconds): "Waiting \(String(format: "%.1f", seconds))s"
+        case .readScreen: "Reading the screen"
         case .accessibilityAction(let element, let action):
             "\(Self.friendlyAccessibilityAction(action)) \(element.description)"
+        case .chooseMenuItem(let path): "Choosing \(path.joined(separator: " \u{203A} "))"
         case .nativeAction(let operation): operation.summary
         case .askAIBridge(let bridge, _): "Asking \(bridge.displayName)"
         case .requestConfirmation: "Waiting for your confirmation"
@@ -172,6 +186,8 @@ extension DesktopAction {
             from
         case .accessibilityAction(let element, _):
             .element(element)
+        case .typeText(_, let field?):
+            .element(field)
         default:
             nil
         }

@@ -11,6 +11,8 @@ import FoundationModels
 public enum PlannedActionKind: String, Sendable, CaseIterable {
     /// Launch an application, or bring it forward if it is already running.
     case openApplication
+    /// Choose a command listed in MENUS, such as File > New.
+    case chooseMenuItem
     /// Click a control listed in CONTROLS, by its id.
     case clickElement
     /// Double-click a control listed in CONTROLS, by its id.
@@ -33,6 +35,8 @@ public enum PlannedActionKind: String, Sendable, CaseIterable {
     case askCopilot
     /// Wait for the interface to catch up.
     case wait
+    /// Read the text on screen, when CONTROLS do not show what you need.
+    case readScreen
     /// Ask the user a question only they can answer.
     case askUser
     /// The goal has been achieved.
@@ -66,12 +70,12 @@ public struct PlannedStepDraft: Sendable {
     @Guide(description: "For openApplication: the name of the application, such as Safari")
     public var applicationName: String?
 
-    @Guide(description: "For the element steps and scroll: the id in square brackets from CONTROLS, such as e12")
+    @Guide(description: "For the element steps, typeText and scroll: the id in square brackets from CONTROLS, such as e12. For typeText, the field to type into")
     public var elementID: String?
 
     @Guide(
         description:
-            "The text this step needs: what to type, the web address to open, the question to ask Copilot or the user, or the summary when completing"
+            "The text this step needs: what to type, the menu command such as File > New, the web address to open, the question to ask Copilot or the user, or the summary when completing"
     )
     public var text: String?
 
