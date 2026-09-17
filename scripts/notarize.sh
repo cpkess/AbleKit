@@ -58,16 +58,36 @@ if [[ "$ARTIFACT" == *.app ]]; then
     SUBMISSION="$TEMP_DIR/$(basename "$ARTIFACT").zip"
     ditto -c -k --keepParent "$ARTIFACT" "$SUBMISSION"
 fi
-cleanup() { [[ -n "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"; }
+# Written as an if, not `[[ ]] && rm`: an EXIT trap's last status becomes the script's, so the
+# short form made every successful DMG notarization report failure when there was nothing to remove.
+cleanup() {
+    if [[ -n "$TEMP_DIR" ]]; then rm -rf "$TEMP_DIR"; fi
+}
 trap cleanup EXIT
 
 echo "==> Submitting $(basename "$ARTIFACT") — this usually takes a few minutes"
-if ! xcrun notarytool submit "$SUBMISSION" "${CREDENTIALS[@]}" --wait; then
+# notarytool exits successfully even when Apple rejects the submission, so the verdict is read
+# from its JSON output rather than trusted from the exit status.
+RESULT="$(xcrun notarytool submit "$SUBMISSION" "${CREDENTIALS[@]}" --wait --output-format json)"
+STATUS="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))' <<<"$RESULT")"
+SUBMISSION_ID="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))' <<<"$RESULT")"
+
+if [[ "$STATUS" != "Accepted" ]]; then
     echo "" >&2
-    echo "Notarization failed. For the specific reason:" >&2
-    echo "  xcrun notarytool log <submission-id> --keychain-profile $NOTARY_PROFILE" >&2
+    echo "error: Apple did not accept the submission (status: ${STATUS:-unknown})." >&2
+    if [[ -n "$SUBMISSION_ID" ]]; then
+        echo "Apple's reasons:" >&2
+        xcrun notarytool log "$SUBMISSION_ID" "${CREDENTIALS[@]}" 2>/dev/null \
+            | python3 -c '
+import json, sys
+log = json.load(sys.stdin)
+for issue in log.get("issues") or []:
+    print("  -", issue.get("path", "").split(".dmg/")[-1] + ":", issue.get("message"))
+' >&2 || true
+    fi
     exit 1
 fi
+echo "==> Accepted (submission $SUBMISSION_ID)"
 
 echo "==> Stapling"
 # Stapling is what lets the app open on a Mac that is offline: without it, Gatekeeper has to reach
