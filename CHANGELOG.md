@@ -5,6 +5,8 @@ All notable changes to AbleKit are recorded here. This project follows
 
 ## [Unreleased]
 
+## [0.1.1]
+
 ### Fixed
 
 - AbleKit quit unexpectedly when typing in the palette, and sometimes shortly after launch. Its
@@ -64,5 +66,6 @@ capable — reliability over breadth.
 - Finder selection paths are read through Accessibility, so they are only available in applications
   that publish `AXURL`. AbleKit does not request Apple Events permission for this.
 
-[Unreleased]: https://github.com/cpkess/AbleKit/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/cpkess/AbleKit/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/cpkess/AbleKit/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/cpkess/AbleKit/releases/tag/v0.1.0
