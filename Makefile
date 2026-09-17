@@ -48,7 +48,8 @@ help:
 	@echo "    make test-live           Also exercise the real Apple Intelligence model"
 	@echo ""
 	@echo "  Permissions"
-	@echo "    make permissions         Open the two System Settings panes"
+	@echo "    make permissions         Open the Accessibility pane (required)"
+	@echo "    make screen-permission   Open the Screen Recording pane (optional)"
 	@echo "    make reset-permissions   Clear AbleKit's grants and start over"
 	@echo ""
 	@echo "  Shipping"
@@ -108,12 +109,16 @@ test-live:
 
 # -------------------------------------------------------------- permissions
 
+# System Settings is a single window, so opening two panes in a row just shows the second one.
+# Each gets its own target instead.
 .PHONY: permissions
 permissions:
-	@echo "==> Opening the Accessibility pane"
+	@echo "==> Opening Accessibility. Switch AbleKit on."
 	@open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-	@sleep 2
-	@echo "==> Opening the Screen Recording pane"
+
+.PHONY: screen-permission
+screen-permission:
+	@echo "==> Opening Screen Recording. Switch AbleKit on, then run 'make restart'."
 	@open "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
 
 .PHONY: reset-permissions
