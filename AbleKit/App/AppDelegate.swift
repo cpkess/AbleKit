@@ -102,6 +102,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         log.info("Palette shown")
     }
 
+    #if DEBUG
+        func simulateTypingInPalette(_ text: String) async {
+            let controller = palette ?? PaletteWindowController(state: state, delegate: self)
+            palette = controller
+            await controller.simulateTyping(text)
+        }
+    #endif
+
     func hidePalette() {
         palette?.hide()
     }
@@ -151,7 +159,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Without this, AppKit frees the window when it is closed, and the next attempt to show it
         // does nothing — the reason setup could not be reopened.
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: content.environment(state))
+        let hosting = NSHostingView(rootView: content.environment(state))
+        // The window's size is set here and nowhere else; letting SwiftUI resize it during layout
+        // is what crashed the palette. See HostedPanel.
+        hosting.sizingOptions = []
+        window.contentView = hosting
         window.center()
         return window
     }

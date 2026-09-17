@@ -17,6 +17,8 @@ mkfifo "$FIFO"
 STREAM=$!
 cleanup() {
     kill "$STREAM" 2>/dev/null || true
+    # Reaping it here keeps bash from printing a "Terminated" notice for the stream we just stopped.
+    wait "$STREAM" 2>/dev/null || true
     rm -f "$FIFO"
 }
 trap cleanup EXIT

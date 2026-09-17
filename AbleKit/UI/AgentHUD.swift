@@ -5,30 +5,15 @@ import SwiftUI
 /// The panel shown while a task runs.
 @MainActor
 final class HUDWindowController {
-    private let panel: FloatingPanel
+    private let host = HostedPanel(width: 380, initialHeight: 140, anchor: .bottom)
+    private var panel: FloatingPanel { host.panel }
 
     init(state: AppState) {
-        panel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 140),
-            styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.titlebarAppearsTransparent = true
-        panel.titleVisibility = .hidden
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.isMovableByWindowBackground = true
         // Above the overlay highlight, so the controls are never obscured by the thing they
         // control. The user must be able to reach Stop at all times.
         panel.level = .modalPanel
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-
-        panel.contentView = NSHostingView(
-            rootView: AgentHUDView(onDismiss: { [weak panel] in panel?.orderOut(nil) })
+        host.setContent(
+            AgentHUDView(onDismiss: { [weak panel = host.panel] in panel?.orderOut(nil) })
                 .environment(state)
         )
     }

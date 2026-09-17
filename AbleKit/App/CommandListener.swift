@@ -57,6 +57,13 @@ final class CommandListener {
         case "stop":
             delegate.state.cancel()
             log.notice("Stopped by command")
+        case "type":
+            // Types into the palette without submitting, for reproducing layout problems.
+            #if DEBUG
+                Task { await delegate.simulateTypingInPalette(argument) }
+            #else
+                log.error("type is only available in Debug builds")
+            #endif
         case "ask":
             #if DEBUG
                 guard !argument.isEmpty else {

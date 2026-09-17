@@ -7,6 +7,8 @@ All notable changes to AbleKit are recorded here. This project follows
 
 ### Fixed
 
+- AbleKit quit unexpectedly when typing in the palette, and sometimes shortly after launch. Its
+  windows were resizing themselves in the middle of their own layout, which macOS treats as fatal.
 - The menu bar menu did nothing: Ask AbleKit, Settings and Setup all silently failed. Settings
   and Setup now open reliably, and Setup can be reopened at any time from the menu.
 - Finished tasks no longer keep going. Asked to open an app, AbleKit opened it and then tried to

@@ -2,67 +2,41 @@ import AbleKitCore
 import AppKit
 import SwiftUI
 
-/// A borderless panel that can take keyboard focus.
-///
-/// `NSPanel` refuses to become key by default when it has no title bar, which would leave the
-/// palette unable to receive the text the user is trying to type into it.
-final class FloatingPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
-
 /// Hosts the command palette.
 @MainActor
 final class PaletteWindowController {
 
-    private let panel: FloatingPanel
+    private let host = HostedPanel(width: 620, initialHeight: 64, anchor: .top)
+    private var panel: FloatingPanel { host.panel }
     private weak var delegate: AppDelegate?
+    let model = PaletteModel()
 
     var isVisible: Bool { panel.isVisible }
 
     init(state: AppState, delegate: AppDelegate) {
         self.delegate = delegate
 
-        panel = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 92),
-            styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.titlebarAppearsTransparent = true
-        panel.titleVisibility = .hidden
-        panel.isMovableByWindowBackground = true
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
         panel.level = .floating
         panel.hidesOnDeactivate = true
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.animationBehavior = .utilityWindow
 
-        let root = CommandPaletteView(
-            onSubmit: { [weak delegate] request in
-                delegate?.hidePalette()
-                switch request {
-                case .goal(let goal):
-                    state.start(goal: goal)
-                case .skill(let skill, let parameters):
-                    state.run(skill, parameters: parameters)
-                }
-                delegate?.showHUD()
-            },
-            onDismiss: { [weak delegate] in delegate?.hidePalette() }
+        host.setContent(
+            CommandPaletteView(
+                onSubmit: { [weak delegate] request in
+                    delegate?.hidePalette()
+                    switch request {
+                    case .goal(let goal):
+                        state.start(goal: goal)
+                    case .skill(let skill, let parameters):
+                        state.run(skill, parameters: parameters)
+                    }
+                    delegate?.showHUD()
+                },
+                onDismiss: { [weak delegate] in delegate?.hidePalette() },
+                model: model
+            )
+            .environment(state)
         )
-        .environment(state)
-
-        // A hosting controller rather than a hosting view, so the panel resizes to fit its content.
-        // The palette grows when a Skill asks for values, and a fixed-height panel would clip the
-        // form it is showing.
-        let hosting = NSHostingController(rootView: root)
-        hosting.sizingOptions = [.preferredContentSize]
-        panel.contentViewController = hosting
     }
 
     func show() {
@@ -92,4 +66,16 @@ final class PaletteWindowController {
             )
         )
     }
+
+    #if DEBUG
+        /// Types into the palette one character at a time, exactly as the text field would see it.
+        func simulateTyping(_ text: String) async {
+            show()
+            model.goal = ""
+            for character in text {
+                model.goal.append(character)
+                try? await Task.sleep(for: .milliseconds(60))
+            }
+        }
+    #endif
 }

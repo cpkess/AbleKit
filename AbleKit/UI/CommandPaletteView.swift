@@ -14,12 +14,20 @@ enum PaletteRequest {
 /// Modelled on Spotlight rather than on a chat window (brief §21). The difference is not
 /// decorative — a chat window invites a conversation, and AbleKit is not trying to have one. It is
 /// trying to be told a task and get out of the way.
+/// The text in the palette, owned outside the view so the window controller can drive it —
+/// which is what lets a layout problem be reproduced from the terminal instead of by hand.
+@MainActor
+@Observable
+final class PaletteModel {
+    var goal = ""
+}
+
 struct CommandPaletteView: View {
     let onSubmit: (PaletteRequest) -> Void
     let onDismiss: () -> Void
+    @Bindable var model: PaletteModel
 
     @Environment(AppState.self) private var state
-    @State private var goal = ""
     /// Set when a Skill needs values before it can run, which turns the palette into a short form.
     @State private var pendingSkill: Skill?
     @State private var parameterValues: [String: String] = [:]
@@ -62,14 +70,14 @@ struct CommandPaletteView: View {
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            TextField("What should I do?", text: $goal, axis: .vertical)
+            TextField("What should I do?", text: $model.goal, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 20, weight: .regular))
                 .lineLimit(1...3)
                 .focused($isFieldFocused)
                 .onSubmit(submitGoal)
 
-            if !goal.isEmpty {
+            if !model.goal.isEmpty {
                 Button(action: submitGoal) {
                     Image(systemName: "return")
                         .foregroundStyle(.secondary)
@@ -230,7 +238,7 @@ struct CommandPaletteView: View {
     /// Suggestions are offered rather than pushed: the field is always free text, because the
     /// things worth automating are mostly things nobody thought to save first.
     private var suggestions: [Suggestion] {
-        let query = goal.trimmingCharacters(in: .whitespaces).lowercased()
+        let query = model.goal.trimmingCharacters(in: .whitespaces).lowercased()
 
         let skills = state.skills
             .filter { query.isEmpty || $0.name.lowercased().contains(query) }
@@ -259,7 +267,7 @@ struct CommandPaletteView: View {
     }
 
     private func submitGoal() {
-        let trimmed = goal.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = model.goal.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         onSubmit(.goal(trimmed))
         reset()
@@ -275,7 +283,7 @@ struct CommandPaletteView: View {
     }
 
     private func reset() {
-        goal = ""
+        model.goal = ""
         pendingSkill = nil
         parameterValues = [:]
     }
