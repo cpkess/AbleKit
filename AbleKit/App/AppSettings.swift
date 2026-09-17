@@ -48,6 +48,14 @@ public final class AppSettings {
         }
     }
 
+    // MARK: - Intelligence
+
+    /// Where reasoning runs. On this Mac unless the user has explicitly opted in to Private Cloud
+    /// Compute; the Settings toggle asks for confirmation before this can change.
+    public var reasoningLocation: ReasoningLocation {
+        didSet { UserDefaults.standard.set(reasoningLocation.rawValue, forKey: Key.reasoningLocation) }
+    }
+
     // MARK: - Privacy
 
     public var diagnosticLoggingEnabled: Bool {
@@ -90,6 +98,9 @@ public final class AppSettings {
         diagnosticLoggingEnabled = defaults.bool(forKey: Key.diagnosticLogging)
         automaticallyChecksForUpdates = defaults.bool(forKey: Key.automaticUpdateChecks)
         showsDebugInterface = defaults.bool(forKey: Key.showsDebugInterface)
+        reasoningLocation =
+            defaults.string(forKey: Key.reasoningLocation).flatMap(ReasoningLocation.init(rawValue:))
+            ?? .onDevice
     }
 
     /// The limits a new task runs under.
@@ -137,6 +148,7 @@ public final class AppSettings {
         static let automaticUpdateChecks = "updates.automaticChecks"
         static let showsDebugInterface = "developer.showsDebugInterface"
         static let lastGoals = "history.recentGoals"
+        static let reasoningLocation = "intelligence.reasoningLocation"
     }
 }
 

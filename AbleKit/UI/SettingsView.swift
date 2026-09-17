@@ -9,6 +9,7 @@ struct SettingsView: View {
         TabView {
             GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
             AutomationSettings().tabItem { Label("Automation", systemImage: "wand.and.rays") }
+            IntelligenceSettings().tabItem { Label("Intelligence", systemImage: "brain") }
             SkillsSettings().tabItem { Label("Skills", systemImage: "sparkles") }
             PrivacySettings().tabItem { Label("Privacy", systemImage: "lock.shield") }
             UpdateSettings().tabItem { Label("Updates", systemImage: "arrow.down.circle") }

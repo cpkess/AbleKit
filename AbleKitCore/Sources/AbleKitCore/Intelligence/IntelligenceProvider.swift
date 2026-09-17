@@ -56,11 +56,20 @@ public struct PlannedStep: Sendable, Equatable {
     /// How sure the planner is, `0...1`. Low confidence on a consequential action is a reason to
     /// ask the user rather than to proceed.
     public let confidence: Double
+    /// Where the step was actually reasoned — which may be this Mac even when Private Cloud Compute
+    /// was requested, if the cloud could not be used.
+    public let reasonedBy: ReasoningLocation
 
-    public init(action: DesktopAction, rationale: String, confidence: Double = 1) {
+    public init(
+        action: DesktopAction,
+        rationale: String,
+        confidence: Double = 1,
+        reasonedBy: ReasoningLocation = .onDevice
+    ) {
         self.action = action
         self.rationale = rationale
         self.confidence = min(max(confidence, 0), 1)
+        self.reasonedBy = reasonedBy
     }
 }
 

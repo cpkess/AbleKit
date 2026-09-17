@@ -28,6 +28,19 @@ Instead AbleKit runs with the **Hardened Runtime**, is signed with a Developer I
 is bounded by the two permissions above. The entitlements file states this in place rather than
 leaving it to be inferred.
 
+### Private Cloud Compute
+
+Switching reasoning to Private Cloud Compute widens what leaves the Mac, so it is guarded like a
+permission:
+
+- In release builds it can only be turned on in Settings, behind a confirmation that lists what
+  will be sent. The terminal command that sets it exists only in Debug builds — otherwise any
+  local process could quietly opt the user in.
+- Turning it *off* needs no confirmation.
+- A cloud refusal is recognised narrowly (the specific error an unapproved app receives), so a
+  transient network failure never disables the cloud for a session, and never enables anything.
+- Every cloud-planned step is visible in the task window and the log.
+
 ### The command channel
 
 `make palette`, `make ask` and friends reach the running app through a distributed notification.

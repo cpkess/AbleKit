@@ -52,9 +52,12 @@ public struct PromptBuilder: Sendable {
     }
 
     private let budget: Budget
+    /// Whether clipboard contents are described. Off for prompts that leave the Mac.
+    private let includesClipboard: Bool
 
-    public init(budget: Budget = .default) {
+    public init(budget: Budget = .default, includesClipboard: Bool = true) {
         self.budget = budget
+        self.includesClipboard = includesClipboard
     }
 
     // MARK: - Planning
@@ -232,7 +235,7 @@ public struct PromptBuilder: Sendable {
             lines.append("Selected text: \(selected.truncated(to: budget.maximumSnippetCharacters).quoted)")
         }
 
-        if let clipboard = context.clipboard?.text?.trimmed, !clipboard.isEmpty {
+        if includesClipboard, let clipboard = context.clipboard?.text?.trimmed, !clipboard.isEmpty {
             lines.append("Clipboard: \(clipboard.truncated(to: budget.maximumSnippetCharacters).quoted)")
         }
 

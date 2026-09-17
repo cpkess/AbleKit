@@ -27,7 +27,12 @@ private let liveTestsEnabled = ProcessInfo.processInfo.environment["ABLEKIT_LIVE
 )
 struct LiveModelTests {
 
-    private let provider = AppleIntelligenceProvider()
+    /// `ABLEKIT_LIVE_MODEL=cloud` runs the same suite against Private Cloud Compute, falling back to
+    /// the Mac wherever the cloud cannot be used, exactly as the app does.
+    private let provider = AppleIntelligenceProvider(
+        location: ProcessInfo.processInfo.environment["ABLEKIT_LIVE_MODEL"] == "cloud"
+            ? .privateCloudCompute : .onDevice
+    )
 
     /// Plans a step the way `AgentSession` does: a rejected plan is re-planned rather than fatal.
     ///
@@ -416,5 +421,22 @@ struct LiveModelTests {
             return ["e3", "e4"].contains(element.id)
         }()
         #expect(pressedDigitOrClear, "got \(step.action) — \(step.rationale)")
+    }
+
+    @Test("Asking for the cloud still produces a step, and reports honestly where it was reasoned")
+    func cloudRequestFallsBackHonestly() async throws {
+        CloudAccessMemory.reset()
+        let cloud = AppleIntelligenceProvider(location: .privateCloudCompute)
+        let step = try await cloud.planNextStep(
+            goal: "Open Safari",
+            context: AgentContext(goal: "Open Safari", desktop: trackerDesktop())
+        )
+        #expect(step.action == .openApplication(ApplicationReference(name: "Safari")))
+        // Whatever happened, the step must say where it really ran: if the cloud refused this
+        // build, it ran on the Mac.
+        if AppleIntelligenceProvider.cloudStatus() != .available {
+            #expect(step.reasonedBy == .onDevice)
+        }
+        print("cloud status after request: \(AppleIntelligenceProvider.cloudStatus()); step reasoned by \(step.reasonedBy)")
     }
 }

@@ -31,6 +31,8 @@ public final class AgentSession {
     public private(set) var gatheredInformation: [GatheredInformation] = []
     /// The most recent context, for the debug interface.
     public private(set) var latestContext: DesktopContext?
+    /// Where the most recent step was reasoned, so the interface can show when the cloud was used.
+    public private(set) var lastReasoningLocation: ReasoningLocation?
 
     public let id = UUID()
     public let startedAt = Date()
@@ -176,6 +178,8 @@ public final class AgentSession {
                 continue
             }
 
+            lastReasoningLocation = step.reasonedBy
+
             guard await checkpoint() else { return }
 
             // Terminal steps end the task immediately.
@@ -304,7 +308,8 @@ public final class AgentSession {
                     outcome: outcome,
                     startedAt: startedAt,
                     duration: Date().timeIntervalSince(startedAt),
-                    resultingFingerprint: resultingFingerprint
+                    resultingFingerprint: resultingFingerprint,
+                    reasonedBy: step.reasonedBy
                 )
             )
 

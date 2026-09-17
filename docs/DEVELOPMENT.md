@@ -48,6 +48,21 @@ caught.
 `ask` exists only in Debug builds; see [SECURITY.md](SECURITY.md) for why. Consequential actions
 still stop for confirmation in the task window.
 
+### Private Cloud Compute
+
+```bash
+make test-cloud          # is it usable by this build? sends a made-up request only
+make reasoning-cloud     # opt in, Debug builds only; make reasoning-device to undo
+ABLEKIT_LIVE_MODEL=cloud make test-live   # the live suite against the cloud model
+```
+
+Private Cloud Compute needs a **managed entitlement** that Apple grants per developer — apply at
+[developer.apple.com/private-cloud-compute](https://developer.apple.com/private-cloud-compute/).
+Until it is granted, every request is refused (observed as ModelManagerError 1046), AbleKit
+remembers that for the session, and all reasoning happens on the Mac. When access is granted, add
+the entitlement Apple specifies to `Configs/AbleKit.entitlements` and enable it for the App ID;
+nothing else should need to change.
+
 A zsh note: zsh has a builtin called `log`, so in an interactive shell use `/usr/bin/log` to read
 AbleKit's logs directly. The Makefile runs under bash and is unaffected.
 

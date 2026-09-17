@@ -49,6 +49,8 @@ help:
 	@echo "    make stop-task           Stop the running task"
 	@echo "    make check-updates       Ask the running app to check for updates now"
 	@echo "    make diagnostics-on      Include goals and control names in logs (off by default)"
+	@echo "    make test-cloud          Check whether Private Cloud Compute is usable"
+	@echo "    make reasoning-cloud     Opt in to Private Cloud Compute (reasoning-device to undo)"
 	@echo ""
 	@echo "  Testing"
 	@echo "    make test                Core tests (fast, no permissions needed)"
@@ -134,6 +136,18 @@ stop-task:
 ask:
 	@test -n "$(GOAL)" || { echo 'usage: make ask GOAL="Open System Settings"'; exit 1; }
 	@scripts/ask.sh "$(GOAL)"
+
+# Private Cloud Compute. test-cloud sends a made-up request only.
+.PHONY: test-cloud reasoning-cloud reasoning-device
+test-cloud:
+	@scripts/command.sh test-cloud; sleep 5
+	@/usr/bin/log show --last 8s --style compact \
+	    --predicate 'subsystem == "$(BUNDLE_ID)" AND eventMessage BEGINSWITH "Private Cloud Compute test"' \
+	    | sed -n 's/.*\] //p'
+reasoning-cloud:
+	@scripts/command.sh reasoning cloud && echo "==> Reasoning: Private Cloud Compute when available (Debug builds)"
+reasoning-device:
+	@scripts/command.sh reasoning device && echo "==> Reasoning: on this Mac"
 
 .PHONY: diagnostics-on diagnostics-off
 diagnostics-on:

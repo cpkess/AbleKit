@@ -5,7 +5,9 @@ this document is specific about what happens to what it sees.
 
 ## The short version
 
-- Reasoning runs **on your Mac**, using Apple Intelligence.
+- Reasoning runs **on your Mac**, using Apple Intelligence — unless you opt in to Private Cloud
+  Compute, in which case a text description of the screen (never a screenshot, never the
+  clipboard) is sent to Apple's servers to plan each step.
 - Screenshots are held in memory for the step that needs them and are **never written to disk**.
 - There is **no AbleKit account, no AbleKit server, and no telemetry**.
 - Nothing is sent to another application unless you approve the exact text first.
@@ -43,7 +45,40 @@ Nothing in that list leaves your Mac.
 
 ## What leaves your Mac
 
-One thing, and only when you approve it: **an AI bridge handoff**.
+By default, nothing. Two things can change that, and both need you to say yes.
+
+### Private Cloud Compute (opt-in)
+
+Settings ▸ Intelligence can let AbleKit plan with Apple's larger model on **Private Cloud
+Compute**, Apple's privacy-hardened servers. It is off by default, and turning it on shows this
+list and asks first.
+
+When it is on, each planning step sends Apple a **text description** of the screen:
+
+- the frontmost app's name and window title
+- the names, and for text fields the contents, of the controls AbleKit can read
+- text AbleKit read from the screen, when it had to read the screen
+- the app's menu commands
+- any text you had selected
+- your request, and a summary of the steps taken so far
+
+Never sent, even with it on:
+
+- **screenshots** — images stay on the Mac; only text recognised in them can be included
+- **your clipboard** — password managers put passwords there, so it is left out of every cloud
+  request
+
+Whenever Private Cloud Compute cannot be used — not available, usage limit reached, offline, or
+this app not approved by Apple — AbleKit plans on the Mac instead. The task window shows a
+**Private Cloud Compute** label whenever a step really was planned in the cloud, so it is never
+silent.
+
+Apple states that data sent to Private Cloud Compute is used only to fulfil the request, is not
+stored, and is not accessible to anyone, including Apple.
+
+### AI bridge handoffs
+
+Only when you approve it: **an AI bridge handoff**.
 
 When a task asks Copilot something, AbleKit:
 

@@ -5,6 +5,22 @@ All notable changes to AbleKit are recorded here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **Private Cloud Compute (opt-in).** Settings ▸ Intelligence can let AbleKit plan with Apple's
+  larger model on Apple's privacy-hardened servers. It is off by default and asks before turning on.
+  Screenshots and the clipboard are never sent. When the cloud can't be used, AbleKit plans on the
+  Mac instead, and the task window shows whenever a step was planned in the cloud.
+- **Menus.** AbleKit reads each app's menu bar and chooses commands like File › New directly.
+- **Reading and clicking screen text** in apps that don't expose their contents.
+- **Typing into the right field.** A typing step names its field, and AbleKit puts the cursor there
+  first.
+
+### Fixed
+
+- The planner often chose the right kind of step and left out what it applied to.
+- Goals that name a button, menu command or text to type are now followed more reliably.
+
 ## [0.1.1]
 
 ### Added

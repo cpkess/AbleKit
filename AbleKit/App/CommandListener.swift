@@ -48,6 +48,19 @@ final class CommandListener {
             delegate.showSettings()
         case "setup":
             delegate.showOnboarding()
+        case "test-cloud":
+            // Sends a made-up request only; nothing from the screen.
+            Task { await delegate.state.testCloudAccess() }
+        case "reasoning":
+            // Choosing the cloud changes what leaves the Mac, so from the terminal it is a
+            // development convenience only. Release builds require the confirmation in Settings.
+            #if DEBUG
+                delegate.state.settings.reasoningLocation =
+                    argument == "cloud" ? .privateCloudCompute : .onDevice
+                log.notice("Reasoning set to \(delegate.state.settings.reasoningLocation.rawValue, privacy: .public)")
+            #else
+                log.error("reasoning can only be changed in Settings in release builds")
+            #endif
         case "check-updates":
             delegate.state.updates.checkForUpdates()
         case "probe":

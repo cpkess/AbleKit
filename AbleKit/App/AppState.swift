@@ -32,7 +32,14 @@ final class AppState {
     /// The menu cannot collect them, so it hands the Skill to the palette, which can.
     var pendingSkillLaunch: Skill?
 
-    private let intelligence: AppleIntelligenceProvider
+    /// Whether Private Cloud Compute is usable, for Settings.
+    private(set) var cloudStatus: CloudReasoningStatus = .systemNotReady
+
+    /// The reasoning provider for the current settings. Built fresh when used, so a change in
+    /// Settings applies to the very next task.
+    private var intelligence: AppleIntelligenceProvider {
+        AppleIntelligenceProvider(location: settings.reasoningLocation)
+    }
     private let collector: ContextCollector
     private let skillStore: SkillStore
     private let skillRunner = SkillRunner()
@@ -49,7 +56,6 @@ final class AppState {
         self.permissions = permissions
         self.skillStore = skillStore
         self.interaction = InteractionCoordinator()
-        self.intelligence = AppleIntelligenceProvider()
         self.collector = ContextCollector()
         self.updates = UpdateController()
         self.overlay = OverlayController()
@@ -62,6 +68,7 @@ final class AppState {
     func refreshEnvironment() async {
         permissions.refresh()
         intelligenceAvailability = await intelligence.availability
+        cloudStatus = AppleIntelligenceProvider.cloudStatus()
     }
 
     /// Warms the model so the first step of a task does not pay the load cost.
@@ -113,6 +120,8 @@ final class AppState {
         cancel()
         settings.rememberGoal(trimmed)
 
+        // Fixed for the whole task: a Settings change mid-task applies to the next one.
+        let intelligence = self.intelligence
         let session = AgentSession(
             goal: trimmed,
             collector: collector,
@@ -128,7 +137,9 @@ final class AppState {
         )
         self.session = session
 
-        log.notice("Task started: \(self.redacted(trimmed), privacy: .public)")
+        log.notice(
+            "Task started (reasoning: \(intelligence.effectiveLocation().displayName, privacy: .public)): \(self.redacted(trimmed), privacy: .public)"
+        )
         runTask = Task { [weak self] in
             await session.run()
             self?.finish(session)
@@ -187,6 +198,12 @@ final class AppState {
         log.notice("Probe: app=\(app, privacy: .public)|window=\(window, privacy: .public)")
     }
 
+    /// Asks Private Cloud Compute, with a made-up request, whether this build may use it.
+    func testCloudAccess() async {
+        cloudStatus = await AppleIntelligenceProvider.testCloudAccess()
+        log.notice("Private Cloud Compute test: \(self.cloudStatus.explanation, privacy: .public)")
+    }
+
     /// Reports the things that decide whether AbleKit can work at all.
     func logStatus() {
         let accessibility = permissions.status(of: .accessibility).rawValue
@@ -197,7 +214,7 @@ final class AppState {
         case .unavailable(let reason, _): intelligence = "unavailable (\(reason))"
         }
         log.notice(
-            "Status: accessibility=\(accessibility, privacy: .public) screenRecording=\(screen, privacy: .public) intelligence=\(intelligence, privacy: .public) shortcut=\(self.settings.shortcut.displayString, privacy: .public)\(self.shortcutRegistrationFailed ? " (unavailable)" : "", privacy: .public) diagnosticLogging=\(self.settings.diagnosticLoggingEnabled ? "on" : "off", privacy: .public)"
+            "Status: accessibility=\(accessibility, privacy: .public) screenRecording=\(screen, privacy: .public) intelligence=\(intelligence, privacy: .public) reasoning=\(self.settings.reasoningLocation.rawValue, privacy: .public) cloud=\(self.cloudStatus.isAvailable ? "available" : "unavailable", privacy: .public) shortcut=\(self.settings.shortcut.displayString, privacy: .public)\(self.shortcutRegistrationFailed ? " (unavailable)" : "", privacy: .public) diagnosticLogging=\(self.settings.diagnosticLoggingEnabled ? "on" : "off", privacy: .public)"
         )
     }
 
@@ -222,8 +239,9 @@ final class AppState {
             record.isPlanningFailure
             ? "Planning"
             : settings.diagnosticLoggingEnabled ? record.action.logSummary : record.action.kindName
+        let reasoning = record.reasonedBy == .privateCloudCompute ? " [cloud]" : ""
         log.notice(
-            "Step \(record.index + 1): \(action, privacy: .public) via \(record.capability.rawValue, privacy: .public) → \(outcome, privacy: .public)"
+            "Step \(record.index + 1)\(reasoning, privacy: .public): \(action, privacy: .public) via \(record.capability.rawValue, privacy: .public) → \(outcome, privacy: .public)"
         )
     }
 

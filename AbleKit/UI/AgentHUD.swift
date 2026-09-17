@@ -89,10 +89,20 @@ struct AgentHUDView: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !session.history.isEmpty {
-                Text("Step \(session.history.count)")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+            HStack(spacing: 8) {
+                if !session.history.isEmpty {
+                    Text("Step \(session.history.count)")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                // Shown whenever a step was actually reasoned off the Mac, so opting in to the
+                // cloud is never silent in practice either.
+                if session.lastReasoningLocation == .privateCloudCompute {
+                    Label("Private Cloud Compute", systemImage: "icloud")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("This step was planned by Apple Intelligence on Private Cloud Compute.")
+                }
             }
 
             if showsDetail, state.settings.showsDebugInterface {
