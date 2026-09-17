@@ -423,7 +423,8 @@ public final class AgentSession {
                 classification: .routine,
                 capability: .control,
                 outcome: .failed(message),
-                resultingFingerprint: context.stateFingerprint
+                resultingFingerprint: context.stateFingerprint,
+                isPlanningFailure: true
             )
         )
         consecutiveFailures += 1

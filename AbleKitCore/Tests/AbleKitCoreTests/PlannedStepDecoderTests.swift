@@ -32,7 +32,7 @@ struct PlannedStepDecoderTests {
 
     @Test("An element id becomes an element-targeted action")
     func resolvesElementID() throws {
-        let draft = PlannedStepDraft(kind: .clickElement, rationale: "Save the record", elementID: "e7")
+        let draft = PlannedStepDraft(kind: .clickElement, subject: "e7", rationale: "Save the record")
         let step = try decoder.decode(draft, context: context)
         #expect(step.action == .click(target: .element(saveButton)))
         #expect(step.rationale == "Save the record")
@@ -40,21 +40,21 @@ struct PlannedStepDecoderTests {
 
     @Test("Ids wrapped in brackets, as they appear in the prompt, are accepted")
     func acceptsBracketedID() throws {
-        let draft = PlannedStepDraft(kind: .clickElement, rationale: "Save", elementID: "[e7]")
+        let draft = PlannedStepDraft(kind: .clickElement, subject: "[e7]", rationale: "Save")
         let step = try decoder.decode(draft, context: context)
         #expect(step.action == .click(target: .element(saveButton)))
     }
 
     @Test("A label used in place of an id still resolves")
     func fallsBackToLabelMatching() throws {
-        let draft = PlannedStepDraft(kind: .clickElement, rationale: "Save", elementID: "Save")
+        let draft = PlannedStepDraft(kind: .clickElement, subject: "Save", rationale: "Save")
         let step = try decoder.decode(draft, context: context)
         #expect(step.action == .click(target: .element(saveButton)))
     }
 
     @Test("An id that no longer exists is reported in terms the planner can act on")
     func rejectsUnknownElement() {
-        let draft = PlannedStepDraft(kind: .clickElement, rationale: "Save", elementID: "e99")
+        let draft = PlannedStepDraft(kind: .clickElement, subject: "e99", rationale: "Save")
         #expect(throws: IntelligenceError.self) {
             try decoder.decode(draft, context: context)
         }
@@ -86,16 +86,14 @@ struct PlannedStepDecoderTests {
 
     @Test("A hotkey becomes a key plus modifiers")
     func decodesHotkey() throws {
-        let draft = PlannedStepDraft(
-            kind: .hotkey, rationale: "Save", keyName: "s", modifiers: [.command]
-        )
+        let draft = PlannedStepDraft(kind: .hotkey, subject: "s", modifiers: [.command], rationale: "Save")
         let step = try decoder.decode(draft, context: context)
         #expect(step.action == .hotkey(key: .character("s"), modifiers: [.command]))
     }
 
     @Test("A hotkey with no modifiers degrades to a plain keypress rather than failing")
     func hotkeyWithoutModifiers() throws {
-        let draft = PlannedStepDraft(kind: .hotkey, rationale: "Confirm", keyName: "return")
+        let draft = PlannedStepDraft(kind: .hotkey, subject: "return", rationale: "Confirm")
         let step = try decoder.decode(draft, context: context)
         #expect(step.action == .pressKey(.returnKey))
     }
@@ -119,20 +117,20 @@ struct PlannedStepDecoderTests {
 
     @Test("A scroll with no element aims at the focused window")
     func scrollDefaultsToWindow() throws {
-        let draft = PlannedStepDraft(kind: .scroll, rationale: "See more", scrollAmount: -5)
+        let draft = PlannedStepDraft(kind: .scroll, scrollAmount: -5, rationale: "See more")
         let step = try decoder.decode(draft, context: context)
         #expect(step.action == .scroll(target: .point(CGPoint(x: 400, y: 300)), deltaX: 0, deltaY: -5))
     }
 
     @Test("A scroll of zero is rejected as a wasted step")
     func rejectsZeroScroll() {
-        let draft = PlannedStepDraft(kind: .scroll, rationale: "nothing", scrollAmount: 0)
+        let draft = PlannedStepDraft(kind: .scroll, scrollAmount: 0, rationale: "nothing")
         #expect(throws: IntelligenceError.self) { try decoder.decode(draft, context: context) }
     }
 
     @Test("An over-long wait is clamped rather than failing the step")
     func clampsWait() throws {
-        let draft = PlannedStepDraft(kind: .wait, rationale: "Let it load", waitSeconds: 600)
+        let draft = PlannedStepDraft(kind: .wait, subject: "600", rationale: "Let it load")
         let step = try decoder.decode(draft, context: context)
         #expect(step.action == .wait(seconds: 10))
     }
@@ -151,15 +149,15 @@ struct PlannedStepDecoderTests {
     }
 
     @Test("Confidence is clamped into range")
-    func clampsConfidence() throws {
-        let draft = PlannedStepDraft(kind: .wait, rationale: "wait", waitSeconds: 1, confidence: 5)
-        #expect(try decoder.decode(draft, context: context).confidence == 1)
+    func clampsConfidence() {
+        #expect(PlannedStep(action: .readScreen, rationale: "", confidence: 5).confidence == 1)
+        #expect(PlannedStep(action: .readScreen, rationale: "", confidence: -1).confidence == 0)
     }
 
     @Test("An app with no readable controls says so, instead of blaming the id")
     func noAccessibilityTree() {
         let bare = DesktopContext()
-        let draft = PlannedStepDraft(kind: .clickElement, rationale: "click", elementID: "e7")
+        let draft = PlannedStepDraft(kind: .clickElement, subject: "e7", rationale: "click")
         #expect(throws: IntelligenceError.self) { try decoder.decode(draft, context: bare) }
     }
 }

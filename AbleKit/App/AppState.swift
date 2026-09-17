@@ -218,9 +218,10 @@ final class AppState {
         case .declined: outcome = "declined by you"
         case .skipped(let reason): outcome = "skipped: \(reason)"
         }
-        let action = settings.diagnosticLoggingEnabled
-            ? record.action.logSummary
-            : record.action.kindName
+        let action =
+            record.isPlanningFailure
+            ? "Planning"
+            : settings.diagnosticLoggingEnabled ? record.action.logSummary : record.action.kindName
         log.notice(
             "Step \(record.index + 1): \(action, privacy: .public) via \(record.capability.rawValue, privacy: .public) → \(outcome, privacy: .public)"
         )

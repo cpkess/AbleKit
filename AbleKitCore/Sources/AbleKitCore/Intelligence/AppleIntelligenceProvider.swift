@@ -103,12 +103,14 @@ public struct AppleIntelligenceProvider: IntelligenceProvider {
 
     // MARK: - Generation settings
 
-    /// Planning is a decision, not a composition: near-greedy sampling keeps a step from varying
-    /// run to run, which also makes failures reproducible.
-    private static let planningOptions = GenerationOptions(temperature: 0.1)
+    /// Planning is a decision, not a composition, so it is decoded greedily: the same screen and
+    /// goal produce the same step every time. That matters beyond tidiness — with even a little
+    /// sampling, a prompt change could look like a fix on one run and a regression on the next,
+    /// and failures could not be reproduced to be fixed.
+    private static let planningOptions = GenerationOptions(samplingMode: .greedy)
 
-    /// Verification is a judgement and should be as close to deterministic as the model allows.
-    private static let verificationOptions = GenerationOptions(temperature: 0)
+    /// Verification is a judgement and is decoded the same way.
+    private static let verificationOptions = GenerationOptions(samplingMode: .greedy)
 
     // MARK: - Error translation
 

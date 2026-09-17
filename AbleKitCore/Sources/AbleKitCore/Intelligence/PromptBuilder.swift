@@ -74,49 +74,69 @@ public struct PromptBuilder: Sendable {
 
         1. Is the goal already achieved? Then complete. Never act merely to confirm what is \
         already true.
-        2. Does the goal involve Copilot? Then use askCopilot, with the question in the text. \
-        AbleKit opens and operates Copilot itself: never open Copilot yourself, and never type the \
-        question into the app you are looking at.
+        2. Does the goal involve Copilot? Then use askCopilot with the question as the subject. \
+        AbleKit opens and operates Copilot itself: never open Copilot yourself.
         3. Can the goal be reached without touching the interface? Launching an application or \
         opening a web address are done directly. Do not click a control merely because one is listed.
         4. Does it need something only the user knows? Then ask them.
         5. Is it impossible? Then fail, and say why.
-        6. Otherwise, operate the interface. Prefer, in order: a command listed under MENUS; a \
+        6. Otherwise, operate the interface. If the goal names a particular button or piece of text \
+        on screen, act on exactly that. Otherwise prefer, in order: a command listed under MENUS; a \
         control listed under CONTROLS, by its id; a keyboard shortcut; and only then a screen position.
+
+        Every step has a subject. It is never empty:
+        - openApplication: the app's name
+        - chooseMenuItem: the full menu path, such as File > New
+        - clickElement, doubleClickElement, rightClickElement: a control id such as e12, or a \
+        screen text id such as t3
+        - typeText: the exact text to type. Put the id of the text field in field.
+        - pressKey: the key, such as return. hotkey: the key, such as s, with its modifiers.
+        - clickPosition: the position, such as 400, 300
+        - scroll: a control id, or none
+        - openURL: the address. askCopilot, askUser: the question.
+        - wait: the seconds. readScreen: none.
+        - complete: a one-sentence summary. fail: the reason.
 
         Always:
         - Do exactly one step. You will see the result and be asked again.
+        - When asked to use an app to work something out or make something, operate the app step by \
+        step. Never type the answer in yourself.
         - If the controls and menus do not show what you need — a document's content, a list drawn \
         by the app — use readScreen, and the text on screen will be listed next time.
-        - Fill in every field your step needs: typeText needs the text, askCopilot and askUser need \
-        the question, openApplication needs the name.
         - Prefer the least risky action that makes progress. Never guess at a destructive step.
         - Never repeat a step the history shows already failed; find a different route.
 
-        Be brief. The rationale is one short sentence a person will read while waiting.
+        The rationale is one short sentence a person will read while waiting.
 
         Worked examples.
 
         Goal: "Make sure Mail is frontmost" when Mail is already frontmost.
-          kind: complete, text: "Mail is already frontmost."
-          Not a click. Nothing is needed, so nothing is done.
-
-        Goal: "Ask Copilot what the risks are here."
-          kind: askCopilot, text: "What are the risks for this programme?"
-          Not openApplication. AbleKit opens and operates Copilot itself.
+          kind: complete, subject: "Mail is already frontmost."
+          Nothing is needed, so nothing is done.
 
         Goal: "Open Safari."
-          kind: openApplication, applicationName: "Safari"
-          The name is always filled in.
+          kind: openApplication, subject: "Safari"
+
+        Goal: "Open Notes", after the step "\u{2713} Opening Notes", with Notes frontmost.
+          kind: complete, subject: "Notes is open."
+          The goal is met. Opening it again would do nothing.
 
         Goal: "Start a new document", with File: New listed under MENUS.
-          kind: chooseMenuItem, text: "File > New"
-          A menu command is the most reliable way to do something an app offers.
+          kind: chooseMenuItem, subject: "File > New"
+
+        Goal: "Go to the Sound settings" in System Settings, with View: Sound listed under MENUS.
+          kind: chooseMenuItem, subject: "View > Sound"
 
         Goal: "Change the status to Amber", with [e2] text field "Status" listed.
-          kind: typeText, elementID: "e2", text: "Amber"
-          Name the field when typing; AbleKit puts the cursor there first. A listed control is \
-        always named by its id, never by its position.
+          kind: typeText, subject: "Amber", field: "e2"
+          AbleKit puts the cursor in the field first.
+
+        Goal: "Add 2 and 3 in Calculator", with [e4] button "2", [e9] button "Add" listed.
+          kind: clickElement, subject: "e4"
+          Then Add, then 3, then Equals, one step at a time.
+
+        Goal: "Ask Copilot what the risks are here."
+          kind: askCopilot, subject: "What are the risks for this programme?"
         """
 
     /// The standing instructions given to the verifier.
@@ -137,6 +157,10 @@ public struct PromptBuilder: Sendable {
         sections.append("STEP \(context.stepIndex + 1) of at most \(context.stepLimit)")
 
         sections.append(describeDesktop(context.desktop))
+
+        if let hints = GoalAnalysis(goal: goal, context: context.desktop).promptSection {
+            sections.append(hints)
+        }
 
         if let elements = describeElements(context.desktop) {
             sections.append(elements)
@@ -235,7 +259,9 @@ public struct PromptBuilder: Sendable {
         guard let snapshot = context.accessibility else { return nil }
         let elements = snapshot.interactiveElements
         guard !elements.isEmpty else {
-            return "CONTROLS: none readable. This app exposes nothing semantic; work from the screen text."
+            return snapshot.menuItems.isEmpty
+                ? "CONTROLS: none readable. This app exposes nothing semantic; work from the screen text."
+                : "CONTROLS: none readable in the window. Use a command under MENUS where one fits."
         }
 
         let shown = rank(elements).prefix(budget.maximumElements)
@@ -358,12 +384,18 @@ public struct PromptBuilder: Sendable {
             lines.append("(\(history.count - recent.count) earlier steps omitted)")
         }
         for record in recent {
+            if record.isPlanningFailure, case .failed(let reason) = record.outcome {
+                lines.append("\u{2717} Your previous step could not be used: \(reason)")
+                continue
+            }
             let mark = record.outcome.isSuccess ? "\u{2713}" : "\u{2717}"
             lines.append("\(mark) \(record.action.summary) \u{2014} \(record.outcome.summary)")
         }
         if let last = recent.last {
             if case .skipped(let reason) = last.outcome {
                 lines.append(reason)
+            } else if last.isPlanningFailure {
+                lines.append("Fix that and try again; every step needs its subject.")
             } else if last.outcome.isSuccess {
                 lines.append(
                     "The last step worked. If the goal is now achieved, complete. Never repeat a step marked \u{2713}."

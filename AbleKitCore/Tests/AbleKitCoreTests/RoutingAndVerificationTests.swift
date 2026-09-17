@@ -271,3 +271,39 @@ struct VerifierTests {
         #expect(result.outcome == .inconclusive)
     }
 }
+
+@Suite("Model verdicts")
+struct ModelVerdictTests {
+    private struct Judge: IntelligenceProvider {
+        let verdict: VerificationResult
+        let name = "judge"
+        var availability: IntelligenceAvailability { .available }
+        func planNextStep(goal: String, context: AgentContext) async throws -> PlannedStep {
+            throw IntelligenceError.cancelled
+        }
+        func verify(action: DesktopAction, before: DesktopContext, after: DesktopContext)
+            async throws -> VerificationResult
+        { verdict }
+    }
+
+    @Test("A model's failure verdict on a visibly changed screen is treated as unsettled")
+    func failureWithChangeIsInconclusive() async {
+        let before = DesktopContext.fixture(windowTitle: "before")
+        let after = DesktopContext.fixture(windowTitle: "after")
+        let result = await Verifier(intelligence: Judge(verdict: .failed("controls disappeared"))).verify(
+            action: .chooseMenuItem(path: ["File", "New Folder"]), before: before, after: after
+        )
+        #expect(result.outcome == .inconclusive)
+        #expect(result.reason.contains("controls disappeared"))
+    }
+
+    @Test("A model's success verdict is kept")
+    func successIsKept() async {
+        let result = await Verifier(intelligence: Judge(verdict: .succeeded("folder created"))).verify(
+            action: .chooseMenuItem(path: ["File", "New Folder"]),
+            before: .fixture(windowTitle: "before"),
+            after: .fixture(windowTitle: "after")
+        )
+        #expect(result.outcome == .succeeded)
+    }
+}

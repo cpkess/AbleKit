@@ -29,7 +29,17 @@ public struct Verifier: Sendable {
         }
 
         do {
-            return try await intelligence.verify(action: action, before: before, after: after)
+            let judgement = try await intelligence.verify(action: action, before: before, after: after)
+            // The model is the least reliable judge on the ladder. In the first live evaluation it
+            // watched File › New Folder create a folder and called that a failure, and three such
+            // verdicts end a task. A "failed" from the model when the screen visibly changed is
+            // therefore treated as unsettled: the planner still reads the model's reason and can
+            // react to it, but the task is not ended on the model's say-so. "Nothing changed" is
+            // still a hard failure — that one was decided above, from the system, not the model.
+            if judgement.outcome == .failed, before.stateFingerprint != after.stateFingerprint {
+                return .inconclusive("Something changed, but perhaps not as intended: \(judgement.reason)")
+            }
+            return judgement
         } catch {
             // A verification that cannot be performed is reported as exactly that. Treating a
             // failed check as a success is the one outcome that must never happen here.

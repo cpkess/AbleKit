@@ -59,73 +59,51 @@ public enum PlannedModifier: String, Sendable {
 /// Guided generation means the model cannot return prose where an action belongs (brief §7): the
 /// shape is enforced by the schema. It can still return a *wrong* step — an id that no longer
 /// exists, a key name that means nothing — which is what `PlannedStepDecoder` is for.
+///
+/// The shape itself is the result of watching the on-device model fail. An earlier version had a
+/// separate optional field for every kind of payload — application name, element id, text, key,
+/// coordinates, wait time — and the model routinely chose the right kind of step and then left
+/// the one field that mattered empty: "open an application" with no application, "choose a menu
+/// command" with no command. With each optional field a separate choice to skip, it skipped. So
+/// the payload is now a single **required** `subject`, whose meaning depends on the kind, and the
+/// only optional fields left are the two genuinely secondary ones.
 @Generable(description: "The single next step to take on the Mac")
 public struct PlannedStepDraft: Sendable {
     @Guide(description: "What kind of step this is")
     public var kind: PlannedActionKind
 
+    @Guide(
+        description:
+            "What the step acts on, never empty: the app name, the control or screen text id, the menu path such as File > New, the text to type, the key, the web address, the question, the seconds to wait, the summary when completing, or none"
+    )
+    public var subject: String
+
+    @Guide(description: "For typeText only: the id of the text field to type into, such as e12")
+    public var field: String?
+
+    @Guide(description: "For hotkey only: the modifier keys held down")
+    public var modifiers: [PlannedModifier]?
+
+    @Guide(description: "For scroll only: how far, positive to scroll up and negative to scroll down")
+    public var scrollAmount: Int?
+
     @Guide(description: "One short sentence saying why, written for the user to read while waiting")
     public var rationale: String
 
-    @Guide(description: "For openApplication: the name of the application, such as Safari")
-    public var applicationName: String?
-
-    @Guide(description: "For the element steps, typeText and scroll: the id in square brackets from CONTROLS, such as e12. For typeText, the field to type into")
-    public var elementID: String?
-
-    @Guide(
-        description:
-            "The text this step needs: what to type, the menu command such as File > New, the web address to open, the question to ask Copilot or the user, or the summary when completing"
-    )
-    public var text: String?
-
-    @Guide(description: "For pressKey and hotkey: the key, such as return, escape, tab, or a single letter")
-    public var keyName: String?
-
-    @Guide(description: "For hotkey: the modifiers held down with the key")
-    public var modifiers: [PlannedModifier]?
-
-    @Guide(description: "For clickPosition: the horizontal screen position in points")
-    public var x: Double?
-
-    @Guide(description: "For clickPosition: the vertical screen position in points")
-    public var y: Double?
-
-    @Guide(description: "For scroll: how far, positive to scroll up and negative to scroll down")
-    public var scrollAmount: Int?
-
-    @Guide(description: "For wait: how many seconds, at most 10")
-    public var waitSeconds: Double?
-
-    @Guide(description: "How confident you are in this step, from 0 to 1")
-    public var confidence: Double
-
     public init(
         kind: PlannedActionKind,
-        rationale: String,
-        applicationName: String? = nil,
-        elementID: String? = nil,
-        text: String? = nil,
-        keyName: String? = nil,
+        subject: String = "",
+        field: String? = nil,
         modifiers: [PlannedModifier]? = nil,
-        x: Double? = nil,
-        y: Double? = nil,
         scrollAmount: Int? = nil,
-        waitSeconds: Double? = nil,
-        confidence: Double = 1
+        rationale: String = ""
     ) {
         self.kind = kind
-        self.rationale = rationale
-        self.applicationName = applicationName
-        self.elementID = elementID
-        self.text = text
-        self.keyName = keyName
+        self.subject = subject
+        self.field = field
         self.modifiers = modifiers
-        self.x = x
-        self.y = y
         self.scrollAmount = scrollAmount
-        self.waitSeconds = waitSeconds
-        self.confidence = confidence
+        self.rationale = rationale
     }
 }
 

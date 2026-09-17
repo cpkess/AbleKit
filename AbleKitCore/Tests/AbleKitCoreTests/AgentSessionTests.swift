@@ -54,12 +54,35 @@ struct AgentSessionTests {
             .click(target: .element(.fixture())),
             .complete(summary: "done"),
         ])
-        intelligence.verification = .failed("Nothing changed.")
-        let session = makeSession(intelligence: intelligence)
+        let session = makeSession(
+            intelligence: intelligence,
+            // A screen that does not change is the failure the system itself can see.
+            collector: ScriptedCollector(repeating: .fixture(), varying: false)
+        )
 
         await session.run()
 
-        #expect(session.history[0].outcome == .failed("Nothing changed."))
+        #expect(session.history[0].outcome == .failed("Nothing on screen changed."))
+    }
+
+    @Test("A model's failure verdict on a changed screen does not end the task")
+    func modelFailureVerdictIsNotFatal() async {
+        let intelligence = ScriptedIntelligence(actions: [
+            .click(target: .element(.fixture())),
+            .click(target: .element(.fixture(id: "e2", title: "Next"))),
+            .click(target: .element(.fixture(id: "e3", title: "Finish"))),
+            .complete(summary: "done"),
+        ])
+        intelligence.verification = .failed("looks wrong to me")
+        let session = makeSession(
+            intelligence: intelligence,
+            limits: TaskLimits(maximumConsecutiveFailures: 2, actionDelay: 0)
+        )
+
+        await session.run()
+
+        #expect(session.phase == .completed)
+        #expect(session.history.allSatisfy { if case .inconclusive = $0.outcome { true } else { false } })
     }
 
     @Test("An unverifiable step is reported as unverified rather than claimed as done")
@@ -131,9 +154,11 @@ struct AgentSessionTests {
     @Test("Repeated failures stop the task")
     func stopsOnConsecutiveFailures() async {
         let intelligence = ScriptedIntelligence.neverFinishing()
-        intelligence.verification = .failed("did not work")
+        let capability = RecordingCapability()
+        capability.result = .failure(.executionFailed("did not work"))
         let session = makeSession(
             intelligence: intelligence,
+            capability: capability,
             limits: TaskLimits(maximumSteps: 20, maximumConsecutiveFailures: 2, actionDelay: 0)
         )
 
@@ -401,5 +426,23 @@ struct AgentSessionTests {
         #expect(!AgentSession.isIdempotent(.scroll(target: .point(.zero), deltaX: 0, deltaY: -3)))
         #expect(AgentSession.isIdempotent(.openApplication(ApplicationReference(name: "Mail"))))
         #expect(AgentSession.isIdempotent(.nativeAction(.openURL("https://example.com"))))
+    }
+}
+
+@Suite("Planning failures")
+@MainActor
+struct PlanningFailureTests {
+    @Test("An unusable plan is shown to the model as a planning problem, not as an action")
+    func planningFailureInPrompt() {
+        let record = StepRecord(
+            index: 0, action: .wait(seconds: 0), rationale: "", classification: .routine,
+            capability: .control, outcome: .failed("openApplication needs the application's name"),
+            isPlanningFailure: true
+        )
+        let prompt = PromptBuilder().planningPrompt(
+            goal: "g", context: AgentContext(goal: "g", desktop: .fixture(), history: [record])
+        )
+        #expect(prompt.contains("Your previous step could not be used: openApplication needs"))
+        #expect(!prompt.contains("Waiting 0.0s"))
     }
 }

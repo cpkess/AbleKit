@@ -81,26 +81,26 @@ struct MenuCommandTests {
 
     @Test("A planned menu command becomes the app's exact titles")
     func decodesMenuCommand() throws {
-        let draft = PlannedStepDraft(kind: .chooseMenuItem, rationale: "New document", text: "File > New")
+        let draft = PlannedStepDraft(kind: .chooseMenuItem, subject: "File > New", rationale: "New document")
         let step = try decoder.decode(draft, context: desktop())
         #expect(step.action == .chooseMenuItem(path: ["File", "New"]))
     }
 
-    @Test("A path put in the id field is still understood")
-    func menuPathInElementField() throws {
-        let draft = PlannedStepDraft(kind: .chooseMenuItem, rationale: "Bold", elementID: "Format > Font > Bold")
+    @Test("A menu path with an arrow instead of a chevron is still understood")
+    func menuPathWithArrow() throws {
+        let draft = PlannedStepDraft(kind: .chooseMenuItem, subject: "Format -> Font -> Bold", rationale: "Bold")
         #expect(try decoder.decode(draft, context: desktop()).action == .chooseMenuItem(path: ["Format", "Font", "Bold"]))
     }
 
     @Test("A command the app does not have is refused with a hint")
     func unknownCommand() {
-        let draft = PlannedStepDraft(kind: .chooseMenuItem, rationale: "x", text: "File > Teleport")
+        let draft = PlannedStepDraft(kind: .chooseMenuItem, subject: "File > Teleport", rationale: "x")
         #expect(throws: IntelligenceError.self) { try decoder.decode(draft, context: desktop()) }
     }
 
     @Test("A greyed-out command is refused before it is tried")
     func disabledCommand() {
-        let draft = PlannedStepDraft(kind: .chooseMenuItem, rationale: "undo", text: "Edit > Undo")
+        let draft = PlannedStepDraft(kind: .chooseMenuItem, subject: "Edit > Undo", rationale: "undo")
         #expect(throws: IntelligenceError.undecodableStep("\u{201C}Edit > Undo\u{201D} is greyed out right now.")) {
             try decoder.decode(draft, context: desktop())
         }
@@ -173,14 +173,14 @@ struct ScreenTextTargetTests {
 
     @Test("Clicking a text id clicks where that text is")
     func clickTextID() throws {
-        let draft = PlannedStepDraft(kind: .clickElement, rationale: "go", elementID: "t3")
+        let draft = PlannedStepDraft(kind: .clickElement, subject: "t3", rationale: "go")
         let step = try decoder.decode(draft, context: desktop(screenText: text))
         #expect(step.action == .click(target: .point(CGPoint(x: 440, y: 512))))
     }
 
     @Test("A text id that is not on screen is refused")
     func unknownTextID() {
-        let draft = PlannedStepDraft(kind: .clickElement, rationale: "go", elementID: "t9")
+        let draft = PlannedStepDraft(kind: .clickElement, subject: "t9", rationale: "go")
         #expect(throws: IntelligenceError.self) { try decoder.decode(draft, context: desktop(screenText: text)) }
     }
 }
@@ -238,14 +238,14 @@ struct TypingTests {
 
     @Test("A typing step names its field")
     func namedField() throws {
-        let draft = PlannedStepDraft(kind: .typeText, rationale: "name", elementID: "e2", text: "Chris")
+        let draft = PlannedStepDraft(kind: .typeText, subject: "Chris", field: "e2", rationale: "name")
         let step = try decoder.decode(draft, context: desktop(elements: [name]))
         #expect(step.action == .typeText("Chris", into: name))
     }
 
     @Test("Typing blind into a window with unfocused fields is refused")
     func blindTypingRefused() {
-        let draft = PlannedStepDraft(kind: .typeText, rationale: "name", text: "Chris")
+        let draft = PlannedStepDraft(kind: .typeText, subject: "Chris", rationale: "name")
         #expect(throws: IntelligenceError.self) { try decoder.decode(draft, context: desktop(elements: [name])) }
     }
 
@@ -255,13 +255,13 @@ struct TypingTests {
             id: "e2", role: "AXTextField", title: "Name",
             frame: CGRect(x: 10, y: 10, width: 200, height: 24), isFocused: true
         )
-        let draft = PlannedStepDraft(kind: .typeText, rationale: "name", text: "Chris")
+        let draft = PlannedStepDraft(kind: .typeText, subject: "Chris", rationale: "name")
         #expect(try decoder.decode(draft, context: desktop(elements: [focused])).action == .typeText("Chris"))
     }
 
     @Test("Typing into a window with no readable fields is allowed")
     func canvasAllowed() throws {
-        let draft = PlannedStepDraft(kind: .typeText, rationale: "draw", text: "hello")
+        let draft = PlannedStepDraft(kind: .typeText, subject: "hello", rationale: "draw")
         #expect(try decoder.decode(draft, context: desktop(elements: [])).action == .typeText("hello"))
     }
 
@@ -289,5 +289,76 @@ struct TypingTests {
             )
         )
         #expect(result.outcome == .succeeded)
+    }
+}
+
+@Suite("The subject field")
+struct SubjectTests {
+    private let decoder = PlannedStepDecoder()
+
+    @Test("A step whose subject is empty or 'none' is refused where it needs one", arguments: ["", "none", "  ", "N/A"])
+    func emptySubjects(subject: String) {
+        let draft = PlannedStepDraft(kind: .openApplication, subject: subject, rationale: "open")
+        #expect(throws: IntelligenceError.self) { try decoder.decode(draft, context: desktop()) }
+    }
+
+    @Test(
+        "Shortcuts are read however they are written",
+        arguments: [
+            ("cmd+s", Key.character("s"), [ModifierKey.command]),
+            ("Command + Shift + Z", .character("z"), [.shift, .command]),
+            ("\u{21E7}\u{2318}S", .character("s"), [.shift, .command]),
+            ("return", .returnKey, []),
+        ]
+    )
+    func parsesShortcuts(text: String, key: Key, modifiers: [ModifierKey]) throws {
+        let (parsedKey, parsedModifiers) = try PlannedStepDecoder.parseShortcut(text)
+        #expect(parsedKey == key)
+        #expect(Set(parsedModifiers) == Set(modifiers))
+    }
+
+    @Test("A pressKey written as a shortcut becomes a hotkey")
+    func pressKeyWithModifiers() throws {
+        let draft = PlannedStepDraft(kind: .pressKey, subject: "cmd+n", rationale: "new")
+        #expect(try decoder.decode(draft, context: desktop()).action == .hotkey(key: .character("n"), modifiers: [.command]))
+    }
+
+    @Test("Modifiers given both ways are combined, not duplicated")
+    func combinedModifiers() throws {
+        let draft = PlannedStepDraft(kind: .hotkey, subject: "cmd+s", modifiers: [.command, .shift], rationale: "save as")
+        let action = try decoder.decode(draft, context: desktop()).action
+        guard case .hotkey(let key, let modifiers) = action else {
+            Issue.record("expected a hotkey, got \(action)"); return
+        }
+        #expect(key == .character("s"))
+        #expect(modifiers.count == 2 && Set(modifiers) == [.command, .shift])
+    }
+
+    @Test("A position is read however it is written", arguments: ["400, 300", "(400,300)", "x=400 y=300", "400 300"])
+    func parsesPositions(text: String) {
+        #expect(PlannedStepDecoder.parsePoint(text) == CGPoint(x: 400, y: 300))
+    }
+
+    @Test("A position with one number is refused")
+    func incompletePosition() {
+        let draft = PlannedStepDraft(kind: .clickPosition, subject: "400", rationale: "click")
+        #expect(throws: IntelligenceError.self) { try decoder.decode(draft, context: desktop()) }
+    }
+
+    @Test("Typed text keeps its spaces")
+    func typedTextIsNotTrimmed() throws {
+        let draft = PlannedStepDraft(kind: .typeText, subject: " two words ", rationale: "type")
+        #expect(try decoder.decode(draft, context: desktop()).action == .typeText(" two words "))
+    }
+
+    @Test("A button named as the place to type is ignored, not clicked")
+    func buttonIsNotATypingField() throws {
+        // Calculator: the model named the Equals button as the field.
+        let equals = ElementReference(
+            id: "e9", role: "AXButton", title: "Equals",
+            frame: CGRect(x: 0, y: 0, width: 40, height: 40), actions: ["AXPress"]
+        )
+        let draft = PlannedStepDraft(kind: .typeText, subject: "12*7=", field: "e9", rationale: "compute")
+        #expect(try decoder.decode(draft, context: desktop(elements: [equals])).action == .typeText("12*7="))
     }
 }

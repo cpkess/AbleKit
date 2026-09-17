@@ -96,6 +96,12 @@ public struct StepRecord: Sendable, Equatable, Identifiable {
     public let duration: TimeInterval
     /// Fingerprint of the screen after the step, used for loop detection.
     public let resultingFingerprint: String?
+    /// True when no action was taken because the planner's proposal could not be used.
+    ///
+    /// Such a record still carries an `action` for uniformity, but it was never executed, and it is
+    /// shown to the model and the log as a planning problem — displaying it as the placeholder
+    /// action told both of them AbleKit had spent a step "waiting 0.0s".
+    public let isPlanningFailure: Bool
 
     public init(
         id: UUID = UUID(),
@@ -107,7 +113,8 @@ public struct StepRecord: Sendable, Equatable, Identifiable {
         outcome: StepOutcome,
         startedAt: Date = Date(),
         duration: TimeInterval = 0,
-        resultingFingerprint: String? = nil
+        resultingFingerprint: String? = nil,
+        isPlanningFailure: Bool = false
     ) {
         self.id = id
         self.index = index
@@ -119,6 +126,7 @@ public struct StepRecord: Sendable, Equatable, Identifiable {
         self.startedAt = startedAt
         self.duration = duration
         self.resultingFingerprint = resultingFingerprint
+        self.isPlanningFailure = isPlanningFailure
     }
 }
 

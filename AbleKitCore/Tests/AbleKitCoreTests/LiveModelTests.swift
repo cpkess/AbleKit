@@ -199,9 +199,12 @@ struct LiveModelTests {
         #expect(result.outcome != .failed)
     }
 
-    @Test("After the goal has verifiably been done, the planner says so")
-    func completesAfterVerifiedSuccess() async throws {
-        let desktop = DesktopContext(
+    @Test("Once the goal is done, the agent finishes without doing it again")
+    @MainActor
+    func finishesAfterVerifiedSuccess() async throws {
+        // The whole loop, with the real planner and a scripted desktop, because what the user gets
+        // is the agent's behaviour — planner and repeat guard together — not the planner's alone.
+        let settings = DesktopContext(
             frontmostApplication: RunningApplicationInfo(
                 bundleIdentifier: "com.apple.systempreferences",
                 localizedName: "System Settings",
@@ -214,25 +217,20 @@ struct LiveModelTests {
             ),
             arrangement: .fixture()
         )
-        let history = [
-            StepRecord(
-                index: 0,
-                action: .openApplication(ApplicationReference(name: "System Settings")),
-                rationale: "Open it",
-                classification: .routine,
-                capability: .native,
-                outcome: .succeeded
-            )
-        ]
-        let goal = "Open System Settings"
-        let step = try await provider.planNextStep(
-            goal: goal,
-            context: AgentContext(goal: goal, desktop: desktop, history: history, stepIndex: 1)
+        let capability = RecordingCapability(kind: .native)
+        let session = AgentSession(
+            goal: "Open System Settings",
+            collector: ScriptedCollector(repeating: settings),
+            intelligence: provider,
+            executor: Executor(router: CapabilityRouter(capabilities: [capability]), policy: ActionPolicy()),
+            verifier: Verifier(intelligence: provider),
+            limits: TaskLimits(maximumSteps: 6, actionDelay: 0)
         )
-        guard case .complete = step.action else {
-            Issue.record("expected completion, got \(step.action) — \(step.rationale)")
-            return
-        }
+
+        await session.run()
+
+        #expect(session.phase == .completed, "ended \(session.phase): \(session.termination?.userMessage ?? "")")
+        #expect(capability.executed.count <= 1, "executed \(capability.executed)")
     }
 
     private func textEditDesktop(screenText: [RecognizedText] = [], elements: [ElementReference] = [])
@@ -310,5 +308,113 @@ struct LiveModelTests {
             step.action == .typeText("Chris", into: field) || step.action == .click(target: .element(field)),
             "got \(step.action) — \(step.rationale)"
         )
+    }
+
+    // MARK: - Mirrors of the first live evaluation's failures
+
+    private func appDesktop(
+        app: String, bundle: String, window: String,
+        elements: [ElementReference] = [], menus: [MenuItem] = [],
+        history: [StepRecord] = []
+    ) -> DesktopContext {
+        DesktopContext(
+            frontmostApplication: RunningApplicationInfo(
+                bundleIdentifier: bundle, localizedName: app, processIdentifier: 800, isActive: true
+            ),
+            focusedWindow: WindowInfo(
+                title: window, owningApplication: app,
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600), isFocused: true
+            ),
+            accessibility: AccessibilitySnapshot(bundleIdentifier: bundle, elements: elements, menuItems: menus),
+            arrangement: .fixture()
+        )
+    }
+
+    @Test("Eval: System Settings panes are reached through the View menu")
+    func evalSettingsViewMenu() async throws {
+        let desktop = appDesktop(
+            app: "System Settings", bundle: "com.apple.systempreferences", window: "General",
+            menus: [
+                MenuItem(path: ["File", "Close"]), MenuItem(path: ["Edit", "Find"]),
+                MenuItem(path: ["View", "Back"]), MenuItem(path: ["View", "Wi\u{2011}Fi"]),
+                MenuItem(path: ["View", "Bluetooth"]), MenuItem(path: ["View", "General"]),
+                MenuItem(path: ["View", "Appearance"]), MenuItem(path: ["View", "Sound"]),
+                MenuItem(path: ["Window", "Minimize"]),
+            ]
+        )
+        let step = try await plan("Go to the Appearance settings", desktop: desktop)
+        #expect(step.action == .chooseMenuItem(path: ["View", "Appearance"]), "got \(step.action) — \(step.rationale)")
+    }
+
+    @Test("Eval: a Finder folder is created with File > New Folder")
+    func evalFinderNewFolder() async throws {
+        let desktop = appDesktop(
+            app: "Finder", bundle: "com.apple.finder", window: "AbleKitEval",
+            elements: [
+                ElementReference(id: "e2", role: "AXButton", elementDescription: "Back",
+                    frame: CGRect(x: 10, y: 10, width: 30, height: 20), actions: ["AXPress"]),
+                ElementReference(id: "e3", role: "AXStaticText", value: "Recents",
+                    frame: CGRect(x: 10, y: 60, width: 80, height: 20)),
+                ElementReference(id: "e4", role: "AXStaticText", value: "Applications",
+                    frame: CGRect(x: 10, y: 80, width: 80, height: 20)),
+            ],
+            menus: [
+                MenuItem(path: ["File", "New Finder Window"]), MenuItem(path: ["File", "New Folder"]),
+                MenuItem(path: ["File", "New Smart Folder"]), MenuItem(path: ["File", "Get Info"]),
+                MenuItem(path: ["Edit", "Copy"]), MenuItem(path: ["View", "as Icons"]),
+                MenuItem(path: ["Go", "Home"]),
+            ]
+        )
+        let step = try await plan("In the Finder window that is open, create a new folder named Eval Folder", desktop: desktop)
+        #expect(step.action == .chooseMenuItem(path: ["File", "New Folder"]), "got \(step.action) — \(step.rationale)")
+    }
+
+    @Test("Eval: naming the new folder types into the focused name field")
+    func evalFinderNameFolder() async throws {
+        let nameField = ElementReference(
+            id: "e14", role: "AXTextField", value: "untitled folder",
+            frame: CGRect(x: 200, y: 200, width: 120, height: 20), isFocused: true
+        )
+        let history = [StepRecord(
+            index: 0, action: .chooseMenuItem(path: ["File", "New Folder"]), rationale: "",
+            classification: .routine, capability: .accessibility, outcome: .succeeded
+        )]
+        let desktop = appDesktop(
+            app: "Finder", bundle: "com.apple.finder", window: "AbleKitEval", elements: [nameField]
+        )
+        let goal = "In the Finder window that is open, create a new folder named Eval Folder"
+        let step = try await provider.planNextStep(
+            goal: goal,
+            context: AgentContext(goal: goal, desktop: desktop, history: history, stepIndex: 1)
+        )
+        guard case .typeText(let text, _) = step.action else {
+            Issue.record("expected typing the name, got \(step.action) — \(step.rationale)"); return
+        }
+        #expect(text.contains("Eval Folder"))
+    }
+
+    @Test("Eval: Calculator is operated by pressing its buttons, not by typing the answer")
+    func evalCalculatorButtons() async throws {
+        func button(_ id: String, _ title: String, x: Double) -> ElementReference {
+            ElementReference(
+                id: id, role: "AXButton", elementDescription: title,
+                frame: CGRect(x: x, y: 300, width: 40, height: 40), actions: ["AXPress"]
+            )
+        }
+        let elements = [
+            ElementReference(id: "e2", role: "AXStaticText", value: "0", frame: CGRect(x: 0, y: 50, width: 200, height: 40)),
+            button("e3", "All Clear", x: 0), button("e4", "1", x: 40), button("e5", "2", x: 80),
+            button("e6", "7", x: 120), button("e7", "Multiply", x: 160), button("e8", "Equals", x: 200),
+        ]
+        let desktop = appDesktop(
+            app: "Calculator", bundle: "com.apple.calculator", window: "Calculator", elements: elements,
+            menus: [MenuItem(path: ["Edit", "Copy"]), MenuItem(path: ["Edit", "Paste"])]
+        )
+        let step = try await plan("Use Calculator to work out 12 times 7, then copy the result", desktop: desktop)
+        let pressedDigitOrClear: Bool = {
+            guard case .click(.element(let element)) = step.action else { return false }
+            return ["e3", "e4"].contains(element.id)
+        }()
+        #expect(pressedDigitOrClear, "got \(step.action) — \(step.rationale)")
     }
 }
