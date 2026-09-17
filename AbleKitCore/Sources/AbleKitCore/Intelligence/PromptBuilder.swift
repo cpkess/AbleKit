@@ -49,6 +49,29 @@ public struct PromptBuilder: Sendable {
         }
 
         public static let `default` = Budget()
+
+        /// For a busy screen that does not fit the default.
+        public static let compact = Budget(
+            maximumElements: 20,
+            maximumScreenTextCharacters: 900,
+            maximumHistoryEntries: 5,
+            maximumGatheredCharacters: 800,
+            maximumSnippetCharacters: 200,
+            maximumMenuCharacters: 700
+        )
+
+        /// The last resort: enough to act on, and little else.
+        public static let minimal = Budget(
+            maximumElements: 10,
+            maximumScreenTextCharacters: 400,
+            maximumHistoryEntries: 3,
+            maximumGatheredCharacters: 400,
+            maximumSnippetCharacters: 100,
+            maximumMenuCharacters: 300
+        )
+
+        /// Budgets to try in order, largest first.
+        public static let ladder: [Budget] = [.default, .compact, .minimal]
     }
 
     private let budget: Budget
@@ -106,6 +129,7 @@ public struct PromptBuilder: Sendable {
         step. Never type the answer in yourself.
         - If the controls and menus do not show what you need — a document's content, a list drawn \
         by the app — use readScreen, and the text on screen will be listed next time.
+        - If a field or display already holds something that would spoil the result, clear it first.
         - Prefer the least risky action that makes progress. Never guess at a destructive step.
         - Never repeat a step the history shows already failed; find a different route.
 
@@ -331,7 +355,8 @@ public struct PromptBuilder: Sendable {
             grouped[menu, default: []].append(item.path.dropFirst().joined(separator: " > "))
         }
 
-        var lines = ["MENUS (use chooseMenuItem with the full path, e.g. \"File > New\"):"]
+        let owner = context.frontmostApplication.map { "\($0.localizedName)'s " } ?? ""
+        var lines = ["\(owner.uppercased())MENUS (use chooseMenuItem with the full path, e.g. \"File > New\"):"]
         var used = lines[0].count
         for menu in order {
             let line = "  \(menu): " + (grouped[menu] ?? []).joined(separator: ", ")
@@ -382,7 +407,14 @@ public struct PromptBuilder: Sendable {
         let recent = history.suffix(budget.maximumHistoryEntries)
         // Headed as progress, not as "attempts": framed as things tried, the model read a verified
         // success as something still to be done, and kept doing it.
-        var lines = ["STEPS ALREADY TAKEN (\u{2713} means it was checked and worked):"]
+        //
+        // Three marks, not two. A step whose effect could not be confirmed was once shown with the
+        // failure mark, and the model re-did it: in the second live evaluation it created three new
+        // folders and pressed Calculator's 7 three times. Such a step *was done*; only its result is
+        // uncertain, and the current screen is the place to check it.
+        var lines = [
+            "STEPS ALREADY TAKEN (\u{2713} worked, \u{2022} done but not confirmed, \u{2717} did not work):"
+        ]
         if history.count > recent.count {
             lines.append("(\(history.count - recent.count) earlier steps omitted)")
         }
@@ -391,14 +423,25 @@ public struct PromptBuilder: Sendable {
                 lines.append("\u{2717} Your previous step could not be used: \(reason)")
                 continue
             }
-            let mark = record.outcome.isSuccess ? "\u{2713}" : "\u{2717}"
-            lines.append("\(mark) \(record.action.summary) \u{2014} \(record.outcome.summary)")
+            switch record.outcome {
+            case .succeeded:
+                lines.append("\u{2713} \(record.action.summary)")
+            case .inconclusive:
+                lines.append("\u{2022} \(record.action.summary) \u{2014} done; check the screen for its effect")
+            default:
+                lines.append("\u{2717} \(record.action.summary) \u{2014} \(record.outcome.summary)")
+            }
         }
         if let last = recent.last {
             if case .skipped(let reason) = last.outcome {
                 lines.append(reason)
             } else if last.isPlanningFailure {
                 lines.append("Fix that and try again; every step needs its subject.")
+            } else if case .inconclusive = last.outcome {
+                lines.append(
+                    "The last step was carried out. Look at the current screen to see what it did, and "
+                        + "do not repeat it unless the screen shows it had no effect."
+                )
             } else if last.outcome.isSuccess {
                 lines.append(
                     "The last step worked. If the goal is now achieved, complete. Never repeat a step marked \u{2713}."

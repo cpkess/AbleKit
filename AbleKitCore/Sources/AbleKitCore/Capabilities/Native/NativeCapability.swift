@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Synchronization
 
 /// Carries out the things macOS can do directly, with no interface driven at all.
 ///
@@ -178,6 +179,28 @@ public struct ApplicationLocator: Sendable {
             return localized == name || localized.contains(name)
         }
     }
+
+    /// The names of the applications installed in the standard locations, read once per process.
+    ///
+    /// Used to notice when a goal names an app ("…in System Settings") that is not the one in front.
+    public static var installedApplicationNames: [String] {
+        installedNames.withLock { names in
+            if let names { return names }
+            let manager = FileManager.default
+            var found = Set(knownBundleIdentifiers.keys.map { $0.capitalized })
+            for directory in searchDirectories {
+                let entries = (try? manager.contentsOfDirectory(atPath: directory)) ?? []
+                for entry in entries where entry.hasSuffix(".app") {
+                    found.insert(String(entry.dropLast(4)))
+                }
+            }
+            let result = found.sorted()
+            names = result
+            return result
+        }
+    }
+
+    private static let installedNames = Mutex<[String]?>(nil)
 
     /// Searches the standard application directories for a bundle with this name.
     private static func findByName(_ name: String) -> URL? {

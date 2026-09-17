@@ -23,7 +23,10 @@ private let liveTestsEnabled = ProcessInfo.processInfo.environment["ABLEKIT_LIVE
 
 @Suite(
     "LiveModel: Apple Intelligence",
-    .enabled(if: liveTestsEnabled, "set ABLEKIT_LIVE_MODEL_TESTS=1 to run")
+    .enabled(if: liveTestsEnabled, "set ABLEKIT_LIVE_MODEL_TESTS=1 to run"),
+    // One request at a time, as in the app. Run in parallel, a dozen simultaneous requests to the
+    // on-device model made individual ones fail under load, which read as planner regressions.
+    .serialized
 )
 struct LiveModelTests {
 
@@ -438,5 +441,124 @@ struct LiveModelTests {
             #expect(step.reasonedBy == .onDevice)
         }
         print("cloud status after request: \(AppleIntelligenceProvider.cloudStatus()); step reasoned by \(step.reasonedBy)")
+    }
+
+    // MARK: - Mirrors of the second live evaluation's failures
+
+    @Test("Eval 2: an app named in the goal is opened before its menus are used")
+    func eval2OpensAppFirst() async throws {
+        let desktop = appDesktop(
+            app: "TextEdit", bundle: "com.apple.TextEdit", window: "Notes.txt",
+            menus: [MenuItem(path: ["File", "New"]), MenuItem(path: ["Format", "Font", "Bold"])]
+        )
+        let step = try await plan("Open System Settings and go to the Appearance settings", desktop: desktop)
+        #expect(
+            step.action == .openApplication(ApplicationReference(name: "System Settings")),
+            "got \(step.action) — \(step.rationale)"
+        )
+    }
+
+    @Test("Eval 2: after an unconfirmed New Folder, the name is typed rather than another folder made")
+    func eval2NamesAfterUnconfirmedStep() async throws {
+        let nameField = ElementReference(
+            id: "e14", role: "AXTextField", value: "untitled folder",
+            frame: CGRect(x: 200, y: 200, width: 120, height: 20), isFocused: true
+        )
+        let history = [StepRecord(
+            index: 0, action: .chooseMenuItem(path: ["File", "New Folder"]), rationale: "",
+            classification: .routine, capability: .accessibility,
+            outcome: .inconclusive("Something changed, but perhaps not as intended: controls disappeared")
+        )]
+        let desktop = appDesktop(
+            app: "Finder", bundle: "com.apple.finder", window: "AbleKitEval", elements: [nameField],
+            menus: [MenuItem(path: ["File", "New Folder"]), MenuItem(path: ["Edit", "Copy"])]
+        )
+        let goal = "In the Finder window that is open, create a new folder named Eval Folder"
+        let step = try await provider.planNextStep(
+            goal: goal,
+            context: AgentContext(goal: goal, desktop: desktop, history: history, stepIndex: 1)
+        )
+        guard case .typeText(let text, _) = step.action else {
+            Issue.record("expected typing the name, got \(step.action) — \(step.rationale)"); return
+        }
+        #expect(text == "Eval Folder")
+    }
+
+    @Test("Eval 2: a Calculator showing an old result is cleared first")
+    func eval2ClearsCalculator() async throws {
+        func button(_ id: String, _ title: String, x: Double) -> ElementReference {
+            ElementReference(
+                id: id, role: "AXButton", elementDescription: title,
+                frame: CGRect(x: x, y: 300, width: 40, height: 40), actions: ["AXPress"]
+            )
+        }
+        let elements = [
+            ElementReference(id: "e2", role: "AXStaticText", value: "5+85,557", frame: CGRect(x: 0, y: 50, width: 200, height: 40)),
+            button("e3", "All Clear", x: 0), button("e4", "1", x: 40), button("e5", "2", x: 80),
+            button("e6", "7", x: 120), button("e7", "Multiply", x: 160), button("e8", "Equals", x: 200),
+        ]
+        let desktop = appDesktop(
+            app: "Calculator", bundle: "com.apple.calculator", window: "Calculator", elements: elements,
+            menus: [MenuItem(path: ["Edit", "Copy"]), MenuItem(path: ["Edit", "Paste"])]
+        )
+        let step = try await plan("Use Calculator to work out 12 times 7, then copy the result", desktop: desktop)
+        let pressedClear: Bool = {
+            guard case .click(.element(let element)) = step.action else { return false }
+            return element.id == "e3"
+        }()
+        // Known limitation of the on-device model: it starts entering digits even with an old result
+        // on the display and a rule telling it to clear first. Recorded rather than hidden — the
+        // test reports if this ever starts working.
+        withKnownIssue("The on-device model does not clear a display that already holds a value") {
+            #expect(pressedClear, "got \(step.action) — \(step.rationale)")
+        }
+    }
+
+    @Test("Eval 2: a very busy screen still fits the model")
+    func eval2BusyScreenFits() async throws {
+        var elements: [ElementReference] = []
+        for index in 1...300 {
+            let isButton = index % 3 == 0
+            let role: String = isButton ? "AXButton" : "AXStaticText"
+            let actions: [String] = isButton ? ["AXPress"] : []
+            let frame = CGRect(x: 10, y: Double(index) * 20, width: 300, height: 18)
+            elements.append(
+                ElementReference(
+                    id: "e\(index)", role: role,
+                    title: "Item number \(index) with a fairly long descriptive label",
+                    frame: frame, actions: actions
+                )
+            )
+        }
+        let menus = (1...250).map { MenuItem(path: ["Menu \($0 / 25)", "A reasonably long command name \($0)"]) }
+        var text: [RecognizedText] = []
+        for index in 1...120 {
+            let frame = CGRect(x: 10, y: Double(index) * 12, width: 400, height: 10)
+            text.append(RecognizedText(string: "Recognised line \(index) of on-screen text", confidence: 0.9, frame: frame))
+        }
+        let history = (0..<10).map {
+            StepRecord(
+                index: $0, action: .click(target: .element(elements[$0])), rationale: "",
+                classification: .routine, capability: .accessibility, outcome: .succeeded
+            )
+        }
+        var desktop = appDesktop(app: "Busy", bundle: "com.example.busy", window: "Everything", elements: elements, menus: menus)
+        desktop = DesktopContext(
+            frontmostApplication: desktop.frontmostApplication, focusedWindow: desktop.focusedWindow,
+            selectedText: String(repeating: "selected ", count: 200),
+            clipboard: ClipboardSnapshot(text: String(repeating: "clip ", count: 400)),
+            accessibility: desktop.accessibility,
+            screen: ScreenObservation(
+                image: nil,
+                geometry: CaptureGeometry(region: CGRect(x: 0, y: 0, width: 800, height: 2000), pixelSize: CGSize(width: 800, height: 2000)),
+                textRegions: text
+            ),
+            arrangement: .fixture()
+        )
+        // The assertion is simply that planning does not fail for lack of room.
+        _ = try await provider.planNextStep(
+            goal: "Click item number 42",
+            context: AgentContext(goal: "Click item number 42", desktop: desktop, history: history, stepIndex: 10)
+        )
     }
 }

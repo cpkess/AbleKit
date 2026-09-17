@@ -20,23 +20,24 @@ public struct AppleIntelligenceProvider: IntelligenceProvider {
     public let requestedLocation: ReasoningLocation
 
     private let model: SystemLanguageModel
-    private let localPrompts: PromptBuilder
-    /// Prompts for the cloud leave out the clipboard. It is the one piece of context that routinely
-    /// holds secrets — password managers put passwords there — and planning rarely needs it.
-    private let cloudPrompts: PromptBuilder
     private let decoder: PlannedStepDecoder
 
     public init(
         location: ReasoningLocation = .onDevice,
         model: SystemLanguageModel = .default,
-        budget: PromptBuilder.Budget = .default,
         decoder: PlannedStepDecoder = PlannedStepDecoder()
     ) {
         self.requestedLocation = location
         self.model = model
-        self.localPrompts = PromptBuilder(budget: budget)
-        self.cloudPrompts = PromptBuilder(budget: budget, includesClipboard: false)
         self.decoder = decoder
+    }
+
+    /// The prompt builder for a location and budget.
+    ///
+    /// Prompts for the cloud leave out the clipboard. It is the one piece of context that routinely
+    /// holds secrets — password managers put passwords there — and planning rarely needs it.
+    private func prompts(for location: ReasoningLocation, budget: PromptBuilder.Budget) -> PromptBuilder {
+        PromptBuilder(budget: budget, includesClipboard: location == .onDevice)
     }
 
     public var name: String {
@@ -129,14 +130,19 @@ public struct AppleIntelligenceProvider: IntelligenceProvider {
 
     public func planNextStep(goal: String, context: AgentContext) async throws -> PlannedStep {
         try await withFallback { (location) async throws(IntelligenceError) -> PlannedStep in
-            let prompts = location == .privateCloudCompute ? cloudPrompts : localPrompts
-            let prompt = prompts.planningPrompt(goal: goal, context: context)
-            let draft = try await run(on: location, instructions: PromptBuilder.planningInstructions) {
-                session in
-                try await session.respond(
-                    to: prompt, generating: PlannedStepDraft.self, options: Self.planningOptions
-                ).content
-            }
+            let draft = try await fitting(
+                on: location,
+                instructions: PromptBuilder.planningInstructions,
+                schema: PlannedStepDraft.generationSchema,
+                prompt: { budget in
+                    prompts(for: location, budget: budget).planningPrompt(goal: goal, context: context)
+                },
+                request: { session, prompt in
+                    try await session.respond(
+                        to: prompt, generating: PlannedStepDraft.self, options: Self.planningOptions
+                    ).content
+                }
+            )
             let step = try decoder.decode(draft, context: context.desktop, goal: goal)
             return PlannedStep(
                 action: step.action, rationale: step.rationale,
@@ -153,20 +159,83 @@ public struct AppleIntelligenceProvider: IntelligenceProvider {
         after: DesktopContext
     ) async throws -> VerificationResult {
         try await withFallback { (location) async throws(IntelligenceError) -> VerificationResult in
-            let prompts = location == .privateCloudCompute ? cloudPrompts : localPrompts
-            let prompt = prompts.verificationPrompt(action: action, before: before, after: after)
-            let draft = try await run(on: location, instructions: PromptBuilder.verificationInstructions) {
-                session in
-                try await session.respond(
-                    to: prompt, generating: VerificationDraft.self, options: Self.verificationOptions
-                ).content
-            }
+            let draft = try await fitting(
+                on: location,
+                instructions: PromptBuilder.verificationInstructions,
+                schema: VerificationDraft.generationSchema,
+                prompt: { budget in
+                    prompts(for: location, budget: budget)
+                        .verificationPrompt(action: action, before: before, after: after)
+                },
+                request: { session, prompt in
+                    try await session.respond(
+                        to: prompt, generating: VerificationDraft.self, options: Self.verificationOptions
+                    ).content
+                }
+            )
             return VerificationResult(
                 outcome: draft.verdict.outcome,
                 reason: draft.reason.trimmed.isEmpty ? "No detail given." : draft.reason.trimmed,
                 shouldRetry: draft.shouldRetry
             )
         }
+    }
+
+    // MARK: - Fitting the context window
+
+    /// Tokens kept free for the model's answer.
+    private static let responseReserve = 400
+
+    /// Runs a request with the largest prompt that fits the model's context window.
+    ///
+    /// The on-device model's window is small, and a busy screen — dozens of controls, a long menu
+    /// bar, and recognised text after a readScreen — overflowed it in the second live evaluation,
+    /// losing a planning step. Where the SDK can count tokens, the prompt is measured first and
+    /// built from a smaller budget until it fits. Where it cannot, or when the count was wrong, an
+    /// overflow is answered by retrying with the next smaller budget.
+    private func fitting<T: Sendable>(
+        on location: ReasoningLocation,
+        instructions: String,
+        schema: GenerationSchema,
+        prompt build: (PromptBuilder.Budget) -> String,
+        request: (LanguageModelSession, String) async throws -> T
+    ) async throws(IntelligenceError) -> T {
+        let ladder = PromptBuilder.Budget.ladder
+        var index = location == .onDevice
+            ? await firstFittingBudget(ladder, instructions: instructions, schema: schema, build: build)
+            : 0
+
+        while true {
+            let prompt = build(ladder[index])
+            do {
+                return try await run(on: location, instructions: instructions) { session in
+                    try await request(session, prompt)
+                }
+            } catch .contextTooLarge where index + 1 < ladder.count {
+                index += 1
+            }
+        }
+    }
+
+    /// The index of the largest budget whose prompt fits, by the model's own count.
+    private func firstFittingBudget(
+        _ ladder: [PromptBuilder.Budget],
+        instructions: String,
+        schema: GenerationSchema,
+        build: (PromptBuilder.Budget) -> String
+    ) async -> Int {
+        guard #available(macOS 26.4, *) else { return 0 }
+        let window = model.contextSize
+        guard window > 0,
+            let fixed = try? await model.tokenCount(for: Instructions(instructions))
+                + model.tokenCount(for: schema)
+        else { return 0 }
+
+        for (index, budget) in ladder.enumerated() {
+            guard let tokens = try? await model.tokenCount(for: Prompt(build(budget))) else { return index }
+            if fixed + tokens + Self.responseReserve <= window { return index }
+        }
+        return ladder.count - 1
     }
 
     // MARK: - Running a request

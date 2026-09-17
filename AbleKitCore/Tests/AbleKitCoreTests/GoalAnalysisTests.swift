@@ -94,7 +94,70 @@ struct GoalAnalysisTests {
 
     @Test("A goal that names nothing adds nothing")
     func noHints() {
-        #expect(GoalAnalysis(goal: "Open Calculator", context: context()).promptSection == nil)
+        #expect(GoalAnalysis(goal: "Scroll down a bit", context: context(), applications: ["Calculator"]).promptSection == nil)
+    }
+
+    private func frontmost(_ name: String) -> DesktopContext {
+        DesktopContext(
+            frontmostApplication: RunningApplicationInfo(
+                bundleIdentifier: nil, localizedName: name, processIdentifier: 1, isActive: true
+            )
+        )
+    }
+
+    @Test("An app named in the goal but not in front is flagged")
+    func appNotOpen() throws {
+        let analysis = GoalAnalysis(
+            goal: "Open System Settings and go to the Appearance settings",
+            context: frontmost("TextEdit"),
+            applications: ["System Settings", "TextEdit", "Notes"]
+        )
+        #expect(analysis.applicationToOpen == "System Settings")
+        let section = try #require(analysis.promptSection)
+        #expect(section.contains("NOT OPEN YET"))
+        #expect(section.contains("TextEdit's"))
+    }
+
+    @Test("The app already in front is not flagged")
+    func appAlreadyOpen() {
+        let analysis = GoalAnalysis(
+            goal: "In System Settings, go to Appearance",
+            context: frontmost("System Settings"),
+            applications: ["System Settings"]
+        )
+        #expect(analysis.applicationToOpen == nil)
+    }
+
+    @Test(
+        "App names used as ordinary words are not taken as apps",
+        arguments: [
+            "Type hello into the notes field",
+            "Open the keyboard shortcuts panel",
+            "Show a preview of the file",
+            "Rename the file to Notes Backup",
+        ]
+    )
+    func ordinaryWords(goal: String) {
+        let analysis = GoalAnalysis(
+            goal: goal, context: frontmost("Finder"), applications: ["Notes", "Shortcuts", "Preview"]
+        )
+        #expect(analysis.applicationToOpen == nil)
+    }
+
+    @Test(
+        "App names used as apps are recognised",
+        arguments: [
+            ("Add a note in Notes saying hello", "Notes"),
+            ("Open Preview", "Preview"),
+            ("Use Calculator to add 2 and 2", "Calculator"),
+            ("Calculator: work out 2 plus 2", "Calculator"),
+        ]
+    )
+    func appWords(goal: String, app: String) {
+        let analysis = GoalAnalysis(
+            goal: goal, context: frontmost("Finder"), applications: ["Notes", "Preview", "Calculator"]
+        )
+        #expect(analysis.applicationToOpen == app)
     }
 
     @Test(
@@ -119,6 +182,22 @@ struct GoalAnalysisTests {
         }
         #expect(throws: IntelligenceError.self) {
             try PlannedStepDecoder.reconcileTypedText("text", literals: ["one", "two"])
+        }
+    }
+
+    @Test("Clicking the field that already has the cursor becomes typing the goal's text")
+    func clickOnFocusedFieldBecomesTyping() throws {
+        let field = ElementReference(
+            id: "e14", role: "AXTextField", value: "untitled folder",
+            frame: CGRect(x: 0, y: 0, width: 100, height: 20), isFocused: true
+        )
+        let desktop = DesktopContext(accessibility: AccessibilitySnapshot(bundleIdentifier: nil, elements: [field]))
+        let draft = PlannedStepDraft(kind: .clickElement, subject: "e14", rationale: "rename")
+        let step = try PlannedStepDecoder().decode(draft, context: desktop, goal: "create a new folder named Eval Folder")
+        #expect(step.action == .typeText("Eval Folder", into: field))
+
+        #expect(throws: IntelligenceError.self) {
+            try PlannedStepDecoder().decode(draft, context: desktop, goal: "rename the folder")
         }
     }
 }

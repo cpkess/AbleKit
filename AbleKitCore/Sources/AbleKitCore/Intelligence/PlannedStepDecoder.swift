@@ -50,7 +50,20 @@ public struct PlannedStepDecoder: Sendable {
             return .chooseMenuItem(path: try resolveMenuItem(subject, context: context))
 
         case .clickElement:
-            return .click(target: try resolveTarget(subject, kind: draft.kind, context: context))
+            let target = try resolveTarget(subject, kind: draft.kind, context: context)
+            // Clicking a text field that already has the cursor does nothing useful, and can do
+            // harm: in Finder's rename field it deselects the old name, so the new one is appended
+            // to it. The model proposed exactly that once, in place of typing the name.
+            if case .element(let field) = target, field.isFocused, field.isTextInput {
+                let literals = goal.map(GoalAnalysis.literalTexts(in:)) ?? []
+                if literals.count == 1 {
+                    return .typeText(literals[0], into: field)
+                }
+                throw .undecodableStep(
+                    "\(field.description) already has the cursor. Type into it with typeText instead of clicking it."
+                )
+            }
+            return .click(target: target)
 
         case .doubleClickElement:
             return .doubleClick(target: try resolveTarget(subject, kind: draft.kind, context: context))
@@ -179,8 +192,9 @@ public struct PlannedStepDecoder: Sendable {
             throw .undecodableStep("This app's menus could not be read; use a control or a shortcut instead.")
         }
         guard let item = menus.menuItem(matching: requested) else {
+            let app = context.frontmostApplication?.localizedName ?? "the app in front"
             throw .undecodableStep(
-                "There is no menu command \(requested.joined(separator: " > ").quoted). Pick one listed under MENUS."
+                "\(app) has no menu command \(requested.joined(separator: " > ").quoted). The menus listed are \(app)'s; to use another app's menus, open that app first."
             )
         }
         guard item.isEnabled else {

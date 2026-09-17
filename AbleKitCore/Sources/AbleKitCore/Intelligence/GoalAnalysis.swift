@@ -28,13 +28,25 @@ public struct GoalAnalysis: Sendable, Equatable {
     public let mentions: [Mention]
     /// Text the goal asks to be typed or used as a name, exactly as written.
     public let literalTexts: [String]
+    /// An application the goal names that is not the one in front, if any.
+    ///
+    /// In the second live evaluation the model was asked to "open System Settings and go to
+    /// Appearance" and went straight for a menu called "System Settings › Appearance" — in whatever
+    /// app happened to be in front. Saying plainly that the app is not open yet fixes that.
+    public let applicationToOpen: String?
+    /// The app that is in front, whose menus and controls the prompt lists.
+    public let frontmostApplication: String?
 
     /// Shortest label worth matching. Shorter words ("OK", "New") appear in too many goals by
     /// accident to be evidence of anything.
     static let minimumLabelLength = 4
     static let maximumMentions = 6
 
-    public init(goal: String, context: DesktopContext) {
+    public init(
+        goal: String,
+        context: DesktopContext,
+        applications: [String] = ApplicationLocator.installedApplicationNames
+    ) {
         let normalizedGoal = Self.normalize(goal)
         var candidates: [Mention] = []
 
@@ -62,6 +74,17 @@ public struct GoalAnalysis: Sendable, Equatable {
             .map { $0 }
 
         literalTexts = Self.literalTexts(in: goal)
+
+        let frontmost = context.frontmostApplication?.localizedName
+        frontmostApplication = frontmost
+        let named = applications
+            .filter { Self.goal(goal, namesApplication: $0) }
+            .max { $0.count < $1.count }
+        if let named, Self.normalize(named) != frontmost.map(Self.normalize) {
+            applicationToOpen = named
+        } else {
+            applicationToOpen = nil
+        }
     }
 
     /// Whether a label appears in the goal as a whole phrase.
@@ -69,6 +92,37 @@ public struct GoalAnalysis: Sendable, Equatable {
         let phrase = normalize(label)
         guard phrase.count >= minimumLabelLength else { return false }
         return " \(normalizedGoal) ".contains(" \(phrase) ")
+    }
+
+    /// Words after which a capitalised app name really is the app.
+    private static let applicationCues: Set<String> = [
+        "open", "launch", "start", "in", "into", "from", "use", "using", "with", "switch", "to", "quit",
+    ]
+
+    /// Whether the goal refers to an application by name, rather than using the word in passing.
+    ///
+    /// Plenty of app names are ordinary words — Notes, Shortcuts, Preview, Photos — so the name must
+    /// be written capitalised, as a proper noun, and follow a word like "open" or "in". "Type hello
+    /// into the notes field" names no app; "add a note in Notes" does. A name running straight into
+    /// another capitalised word ("Notes Backup") is taken to be a longer name, not the app.
+    static func goal(_ goal: String, namesApplication name: String) -> Bool {
+        guard name.count >= minimumLabelLength else { return false }
+        let words = goal.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        let nameWords = name.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        guard !nameWords.isEmpty, words.count >= nameWords.count else { return false }
+
+        for start in 0...(words.count - nameWords.count) {
+            guard Array(words[start..<start + nameWords.count]) == nameWords else { continue }
+            // "Notes Backup" is a name that happens to start with an app's name, not the app.
+            let after = start + nameWords.count
+            if after < words.count, words[after].first?.isUppercase == true { continue }
+            var cue = start - 1
+            if cue >= 0, words[cue].lowercased() == "the" { cue -= 1 }
+            if start == 0 || (cue >= 0 && applicationCues.contains(words[cue].lowercased())) {
+                return true
+            }
+        }
+        return false
     }
 
     /// Lowercased, ellipses and punctuation turned into spaces, whitespace collapsed.
@@ -142,6 +196,14 @@ public struct GoalAnalysis: Sendable, Equatable {
     /// The hint section for the planning prompt, or `nil` when there is nothing to say.
     public var promptSection: String? {
         var lines: [String] = []
+        if let applicationToOpen {
+            let front = frontmostApplication.map { "\($0) is in front, and the controls and menus listed are \($0)'s" }
+                ?? "it is not in front"
+            lines.append(
+                "NOT OPEN YET: the goal involves \(applicationToOpen), but \(front). Open \(applicationToOpen) first."
+            )
+            lines.append("")
+        }
         if !mentions.isEmpty {
             lines.append("NAMED IN THE GOAL (the goal refers to these; prefer them):")
             for mention in mentions {
