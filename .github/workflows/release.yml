@@ -17,7 +17,35 @@ permissions:
   contents: write
 
 jobs:
+  # Releases are normally cut from a Mac with `make release` and `make publish`, which pushes the tag
+  # itself. Without this check, every such release would trigger a CI run that fails for lack of
+  # signing secrets and leaves a red mark on a release that is perfectly fine. The preflight decides
+  # whether there is anything for CI to do, and the release job is skipped — not failed — otherwise.
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          HAS_SECRETS: ${{ secrets.SIGNING_IDENTITY != '' && secrets.SPARKLE_PRIVATE_KEY != '' }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "$HAS_SECRETS" != "true" ]]; then
+            echo "::notice::Release secrets are not configured, so CI is not building this release. Publish with 'make release' and 'make publish'."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ github.event_name }}" == "push" ]] \
+            && gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::notice::$TAG was already published, so there is nothing for CI to do."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
   release:
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
 
     env:
