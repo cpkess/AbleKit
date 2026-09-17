@@ -53,6 +53,7 @@ help:
 	@echo "  Testing"
 	@echo "    make test                Core tests (fast, no permissions needed)"
 	@echo "    make test-live           Also exercise the real Apple Intelligence model"
+	@echo "    make eval                Real tasks on this Mac, checked independently (hands off!)"
 	@echo ""
 	@echo "  Permissions"
 	@echo "    make permissions         Open the Accessibility pane (required)"
@@ -149,6 +150,13 @@ test:
 .PHONY: test-live
 test-live:
 	@ABLEKIT_LIVE_MODEL_TESTS=1 swift test --package-path AbleKitCore
+
+# Real tasks on this Mac, checked independently. Takes over the keyboard and pointer.
+#   make eval                 all tasks
+#   make eval TASKS="open_calculator textedit_type"
+.PHONY: eval
+eval:
+	@scripts/eval.sh $(TASKS)
 
 # -------------------------------------------------------------- permissions
 

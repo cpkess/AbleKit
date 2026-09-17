@@ -50,6 +50,10 @@ final class CommandListener {
             delegate.showOnboarding()
         case "check-updates":
             delegate.state.updates.checkForUpdates()
+        case "probe":
+            // What is in front right now, read independently of any task — used by the evaluation
+            // suite to check what a task actually did rather than what it claimed.
+            Task { await delegate.state.logProbe() }
         case "status":
             delegate.state.logStatus()
         case "diagnostics":

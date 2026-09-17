@@ -171,6 +171,22 @@ final class AppState {
 
     // MARK: - Logging
 
+    /// Reports what is frontmost, for checking a task's result from outside it.
+    ///
+    /// Always public in the log: it is requested explicitly from the terminal, and it reports only
+    /// the app and window names.
+    func logProbe() async {
+        let context = await collector.collect(
+            options: ContextCollectionOptions(
+                includesAccessibility: true, includesUserContent: false, includesMenus: false,
+                maximumElements: 1, maximumDepth: 0
+            )
+        )
+        let app = context.frontmostApplication?.localizedName ?? "none"
+        let window = context.focusedWindow?.title ?? "none"
+        log.notice("Probe: app=\(app, privacy: .public)|window=\(window, privacy: .public)")
+    }
+
     /// Reports the things that decide whether AbleKit can work at all.
     func logStatus() {
         let accessibility = permissions.status(of: .accessibility).rawValue
