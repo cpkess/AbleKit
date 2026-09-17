@@ -47,6 +47,7 @@ help:
 	@echo "    make palette | settings | setup   Open that window"
 	@echo "    make ask GOAL=\"...\"          Give AbleKit a task and follow it (Debug builds)"
 	@echo "    make stop-task           Stop the running task"
+	@echo "    make check-updates       Ask the running app to check for updates now"
 	@echo "    make diagnostics-on      Include goals and control names in logs (off by default)"
 	@echo ""
 	@echo "  Testing"
@@ -72,7 +73,10 @@ help:
 .PHONY: build
 build:
 	@echo "==> Building (Debug)"
-	@$(XCB) -configuration Debug DEVELOPMENT_TEAM=$(DEVELOPMENT_TEAM) build
+	@# The build number is the commit count, as in releases. Left at 1, a development build looked
+	@# older than every release, and Sparkle offered to "update" it to an older version.
+	@$(XCB) -configuration Debug DEVELOPMENT_TEAM=$(DEVELOPMENT_TEAM) \
+	    CURRENT_PROJECT_VERSION=$(BUILD) build
 
 .PHONY: run
 run: build stop
@@ -112,7 +116,9 @@ status:
 
 # ------------------------------------------------------------ driving the app
 
-.PHONY: palette settings setup stop-task
+.PHONY: palette settings setup stop-task check-updates
+check-updates:
+	@scripts/command.sh check-updates
 palette:
 	@scripts/command.sh palette
 settings:

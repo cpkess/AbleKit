@@ -9,6 +9,11 @@ struct MenuBarMenu: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
+        if let version = state.updates.availableVersion {
+            Button("Update Available: AbleKit \(version)\u{2026}") { state.updates.checkForUpdates() }
+            Divider()
+        }
+
         if let session = state.session, !session.phase.isTerminal {
             Text(session.currentActivity ?? session.phase.displayName)
             Divider()
@@ -52,6 +57,8 @@ struct MenuBarMenu: View {
         // this is the one place that shows their live state.
         Button("Setup & Permissions\u{2026}") { appDelegate?.showOnboarding() }
         Button("Settings\u{2026}") { appDelegate?.showSettings() }
+        Button("Check for Updates\u{2026}") { state.updates.checkForUpdates() }
+            .disabled(!state.updates.canCheckForUpdates || !state.updates.isConfigured)
             .keyboardShortcut(",", modifiers: .command)
         Button("Quit AbleKit") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q", modifiers: .command)

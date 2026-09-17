@@ -7,6 +7,13 @@ All notable changes to AbleKit are recorded here. This project follows
 
 ## [0.1.1]
 
+### Added
+
+- **Check for Updates…** in the menu bar menu, to look for a new version right away instead of
+  waiting for the daily check.
+- When the daily check finds a new version, the menu shows **Update Available** at the top, so the
+  update isn't missed behind other windows.
+
 ### Fixed
 
 - AbleKit quit unexpectedly when typing in the palette, and sometimes shortly after launch. Its

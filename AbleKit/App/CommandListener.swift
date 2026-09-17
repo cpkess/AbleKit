@@ -48,6 +48,8 @@ final class CommandListener {
             delegate.showSettings()
         case "setup":
             delegate.showOnboarding()
+        case "check-updates":
+            delegate.state.updates.checkForUpdates()
         case "status":
             delegate.state.logStatus()
         case "diagnostics":
