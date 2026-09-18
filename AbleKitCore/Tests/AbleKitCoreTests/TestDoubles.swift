@@ -51,10 +51,44 @@ final class ScriptedIntelligence: IntelligenceProvider, @unchecked Sendable {
         return try steps.removeFirst().get()
     }
 
-    func verify(action: DesktopAction, before: DesktopContext, after: DesktopContext) async throws
-        -> VerificationResult
+    func verify(
+        action: DesktopAction, subGoal: String?, before: DesktopContext, after: DesktopContext
+    ) async throws -> VerificationResult {
+        if let verification { return verification }
+        // By default every action finishes the sub-goal it was chosen for, so a scripted run walks
+        // through its plan one step per action.
+        return VerificationResult(outcome: .succeeded, reason: "scripted", completedSubGoal: true)
+    }
+
+    /// The plan the scripted planner returns. Empty unless a test sets one.
+    var scriptedPlan: [String] = []
+    private(set) var planCount = 0
+    /// The plan returned when the agent asks for a rewrite.
+    var scriptedRevision: [String] = []
+    private(set) var revisionCount = 0
+
+    func makePlan(goal: String, context: DesktopContext) async throws -> [String] {
+        planCount += 1
+        return scriptedPlan
+    }
+
+    func revisePlan(goal: String, plan: TaskPlan, context: DesktopContext, reason: String)
+        async throws -> [String]
     {
-        verification ?? .succeeded("scripted")
+        revisionCount += 1
+        return scriptedRevision
+    }
+
+    /// Whether the scripted agent should consider the goal reached. Off unless a test says so, so
+    /// existing runs are unaffected.
+    var goalCheck: GoalCheck = .notYet
+    private(set) var goalCheckCount = 0
+
+    func isGoalAchieved(goal: String, context: DesktopContext, history: [StepRecord]) async throws
+        -> GoalCheck
+    {
+        goalCheckCount += 1
+        return goalCheck
     }
 }
 

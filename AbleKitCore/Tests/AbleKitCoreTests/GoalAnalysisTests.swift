@@ -201,3 +201,44 @@ struct GoalAnalysisTests {
         }
     }
 }
+
+@Suite("Evidence for finishing")
+struct GoalEvidenceTests {
+
+    private func context(elements: [ElementReference] = [], clipboard: String? = nil) -> DesktopContext {
+        DesktopContext(
+            clipboard: clipboard.map { ClipboardSnapshot(text: $0) },
+            accessibility: AccessibilitySnapshot(bundleIdentifier: nil, elements: elements)
+        )
+    }
+
+    private func text(_ value: String) -> ElementReference {
+        ElementReference(id: "e1", role: "AXStaticText", value: value, frame: CGRect(x: 0, y: 0, width: 100, height: 20))
+    }
+
+    @Test("A name the goal asked for, still missing from the screen, contradicts completion")
+    func missingName() {
+        let goal = "create a new folder named Eval Folder"
+        #expect(GoalEvidence.contradiction(ofCompletedGoal: goal, in: context(elements: [text("untitled folder")])) != nil)
+        #expect(GoalEvidence.contradiction(ofCompletedGoal: goal, in: context(elements: [text("Eval Folder")])) == nil)
+    }
+
+    @Test("Text that ended up on the clipboard counts as evidence")
+    func clipboardCounts() {
+        let goal = "type AbleKit was here, then select all the text and copy it"
+        #expect(GoalEvidence.contradiction(ofCompletedGoal: goal, in: context(clipboard: "AbleKit was here")) == nil)
+    }
+
+    @Test("A goal that asks for a copy is not done with an empty clipboard")
+    func emptyClipboard() {
+        let goal = "Use Calculator to work out 12 times 7, then copy the result"
+        #expect(GoalEvidence.contradiction(ofCompletedGoal: goal, in: context()) != nil)
+        #expect(GoalEvidence.contradiction(ofCompletedGoal: goal, in: context(clipboard: "84")) == nil)
+    }
+
+    @Test("A goal with nothing observable to check is left to judgement")
+    func nothingToCheck() {
+        #expect(GoalEvidence.contradiction(ofCompletedGoal: "In Dictionary, look up the word haptic", in: context()) == nil)
+        #expect(GoalEvidence.contradiction(ofCompletedGoal: "Open System Settings", in: context()) == nil)
+    }
+}

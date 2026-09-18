@@ -68,6 +68,17 @@ public enum StepOutcome: Sendable, Equatable, Codable {
         return false
     }
 
+    /// The step ran, but whether it did what was meant could not be settled.
+    public var isInconclusive: Bool {
+        if case .inconclusive = self { return true }
+        return false
+    }
+
+    public var isFailure: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+
     public var summary: String {
         switch self {
         case .succeeded: "succeeded"
@@ -151,6 +162,10 @@ public struct TaskLimits: Sendable, Equatable, Codable {
     public var maximumRepeatedStates: Int
     /// Pause inserted after each action, letting the interface settle before we observe again.
     public var actionDelay: TimeInterval
+    /// Actions to spend on one plan step before suspecting the plan rather than the action.
+    public var attemptsPerPlanStep: Int
+    /// How many times a plan may be reworked, so that rethinking cannot itself become the loop.
+    public var maximumPlanRevisions: Int
 
     public init(
         maximumSteps: Int = 25,
@@ -158,7 +173,9 @@ public struct TaskLimits: Sendable, Equatable, Codable {
         maximumRetriesPerAction: Int = 2,
         maximumConsecutiveFailures: Int = 3,
         maximumRepeatedStates: Int = 3,
-        actionDelay: TimeInterval = 0.4
+        actionDelay: TimeInterval = 0.4,
+        attemptsPerPlanStep: Int = 3,
+        maximumPlanRevisions: Int = 2
     ) {
         self.maximumSteps = maximumSteps
         self.maximumDuration = maximumDuration
@@ -166,6 +183,8 @@ public struct TaskLimits: Sendable, Equatable, Codable {
         self.maximumConsecutiveFailures = maximumConsecutiveFailures
         self.maximumRepeatedStates = maximumRepeatedStates
         self.actionDelay = actionDelay
+        self.attemptsPerPlanStep = attemptsPerPlanStep
+        self.maximumPlanRevisions = maximumPlanRevisions
     }
 
     public static let `default` = TaskLimits()

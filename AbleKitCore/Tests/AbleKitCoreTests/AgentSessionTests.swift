@@ -381,12 +381,13 @@ struct AgentSessionTests {
         #expect(session.history.last?.outcome == .declined)
     }
 
-    @Test("An app that is already open is not reopened, and the task completes")
+    @Test("An app that is already open is not reopened, and the task completes once it is done")
     func completesInsteadOfReopening() async {
         // The planner that motivated this: it keeps asking to open an app that is already open.
         let intelligence = ScriptedIntelligence.repeating(
             .openApplication(ApplicationReference(name: "Tracker"))
         )
+        intelligence.goalCheck = GoalCheck(isAchieved: true, summary: "Tracker is open.")
         let capability = RecordingCapability(kind: .native)
         let session = makeSession(intelligence: intelligence, capability: capability)
 
@@ -394,12 +395,44 @@ struct AgentSessionTests {
 
         #expect(session.phase == .completed)
         #expect(session.termination == .completed("Tracker is open."))
-        // Opened once; the repeat was skipped rather than executed.
+        // Opened once; the repeat was never executed.
         #expect(capability.executed.count == 1)
-        #expect(session.history.count == 2)
-        if case .skipped = session.history.last?.outcome {} else {
-            Issue.record("expected the repeat to be skipped, got \(String(describing: session.history.last?.outcome))")
-        }
+    }
+
+    @Test("A repeat is skipped, not treated as completion, while work remains")
+    func redundantProposalDoesNotFinishAnUnfinishedTask() async {
+        // "Use Calculator to work out 12 times 7" once finished the moment Calculator opened.
+        let intelligence = ScriptedIntelligence.repeating(
+            .openApplication(ApplicationReference(name: "Tracker"))
+        )
+        intelligence.goalCheck = .notYet
+        let capability = RecordingCapability(kind: .native)
+        let session = makeSession(
+            intelligence: intelligence,
+            capability: capability,
+            limits: TaskLimits(maximumSteps: 6, maximumConsecutiveFailures: 99, actionDelay: 0)
+        )
+
+        await session.run()
+
+        #expect(session.termination != .completed("Tracker is open."))
+        #expect(capability.executed.count == 1)
+        #expect(session.history.contains { if case .skipped = $0.outcome { true } else { false } })
+    }
+
+    @Test("A task ends as soon as the goal is reached, without further steps")
+    func stopsWhenGoalIsReached() async {
+        let intelligence = ScriptedIntelligence.neverFinishing()
+        intelligence.goalCheck = GoalCheck(isAchieved: true, summary: "The status is updated.")
+        let capability = RecordingCapability()
+        let session = makeSession(intelligence: intelligence, capability: capability)
+
+        await session.run()
+
+        #expect(session.phase == .completed)
+        #expect(session.termination == .completed("The status is updated."))
+        // One step ran; the check ended the task before a second could.
+        #expect(capability.executed.count == 1)
     }
 
     @Test("One redundant proposal is a nudge, not the end, when new work follows")
@@ -444,5 +477,146 @@ struct PlanningFailureTests {
         )
         #expect(prompt.contains("Your previous step could not be used: openApplication needs"))
         #expect(!prompt.contains("Waiting 0.0s"))
+    }
+}
+
+@Suite("Planning a task")
+@MainActor
+struct TaskPlanTests {
+
+    @Test("A plan is written once, and the agent works through it a step at a time")
+    func worksThroughThePlan() async {
+        let intelligence = ScriptedIntelligence(actions: [
+            .click(target: .element(.fixture(id: "e1", title: "1"))),
+            .click(target: .element(.fixture(id: "e2", title: "2"))),
+            .click(target: .element(.fixture(id: "e3", title: "Equals"))),
+        ])
+        intelligence.scriptedPlan = ["Enter 12", "Press equals"]
+        intelligence.goalCheck = GoalCheck(isAchieved: true, summary: "12 is on screen.")
+        let session = makeSession(intelligence: intelligence)
+
+        await session.run()
+
+        #expect(intelligence.planCount == 1)
+        #expect(session.plan.steps.map(\.intent) == ["Enter 12", "Press equals"])
+        // One action per sub-goal, then the goal check ends it — not the step limit.
+        #expect(session.phase == .completed)
+        #expect(session.termination == .completed("12 is on screen."))
+    }
+
+    @Test("The plan, and where it has got to, is put in front of the planner")
+    func planInPrompt() {
+        var plan = TaskPlan(intents: ["Clear the display", "Enter 12", "Press equals"])
+        plan.completeCurrent()
+        let prompt = PromptBuilder().planningPrompt(
+            goal: "g", context: AgentContext(goal: "g", desktop: .fixture(), plan: plan)
+        )
+        #expect(prompt.contains("THE PLAN"))
+        #expect(prompt.contains("\u{2713} 1. Clear the display"))
+        #expect(prompt.contains("\u{2192} 2. Enter 12"))
+        #expect(prompt.contains("DO THIS NOW: Enter 12"))
+    }
+
+    @Test("A sub-goal that will not finish makes the agent rethink the plan, not grind on")
+    func revisesWhenStuck() async {
+        let intelligence = ScriptedIntelligence.neverFinishing()
+        // Nothing ever completes a sub-goal.
+        intelligence.verification = VerificationResult(
+            outcome: .succeeded, reason: "no change", completedSubGoal: false
+        )
+        intelligence.scriptedPlan = ["Enter 12", "Press equals"]
+        intelligence.scriptedRevision = ["Type 12 with the keyboard", "Press equals"]
+        let session = makeSession(
+            intelligence: intelligence,
+            limits: TaskLimits(
+                maximumSteps: 12, maximumConsecutiveFailures: 99, actionDelay: 0,
+                attemptsPerPlanStep: 2, maximumPlanRevisions: 1
+            )
+        )
+
+        await session.run()
+
+        #expect(intelligence.revisionCount >= 1)
+        #expect(session.plan.steps.first?.intent == "Type 12 with the keyboard")
+    }
+
+    @Test("A rewrite keeps the work already done")
+    func revisionKeepsCompletedWork() {
+        var plan = TaskPlan(intents: ["Open the file", "Change the status", "Save"])
+        plan.completeCurrent()
+        plan.replaceRemaining(with: ["Click Edit", "Set the status to Amber", "Press Save"])
+
+        #expect(plan.steps.map(\.intent) == ["Open the file", "Click Edit", "Set the status to Amber", "Press Save"])
+        #expect(plan.completedCount == 1)
+        #expect(plan.current?.intent == "Click Edit")
+        #expect(plan.revisions == 1)
+    }
+
+    @Test("A plan that finishes without the goal being met is reworked, then given up honestly")
+    func planFinishedButGoalNotMet() async {
+        let intelligence = ScriptedIntelligence.neverFinishing()
+        intelligence.scriptedPlan = ["Do the thing"]
+        intelligence.scriptedRevision = ["Do the thing another way"]
+        intelligence.goalCheck = .notYet
+        let session = makeSession(
+            intelligence: intelligence,
+            limits: TaskLimits(
+                maximumSteps: 20, maximumConsecutiveFailures: 99, maximumRepeatedStates: 99,
+                actionDelay: 0, attemptsPerPlanStep: 9, maximumPlanRevisions: 1
+            )
+        )
+
+        await session.run()
+
+        #expect(session.phase == .failed)
+        #expect(session.termination?.userMessage.contains("not done") == true)
+    }
+
+    @Test("Position is reported for the task window")
+    func position() {
+        var plan = TaskPlan(intents: ["One", "Two", "Three"])
+        #expect(plan.positionDescription == "Step 1 of 3")
+        plan.completeCurrent()
+        #expect(plan.positionDescription == "Step 2 of 3")
+        plan.completeCurrent()
+        plan.completeCurrent()
+        #expect(plan.isComplete)
+        #expect(plan.positionDescription == nil)
+    }
+
+    @Test("A task with no plan still runs, checking the goal after each step")
+    func worksWithoutAPlan() async {
+        let intelligence = ScriptedIntelligence(actions: [.click(target: .element(.fixture()))])
+        intelligence.scriptedPlan = []
+        intelligence.goalCheck = GoalCheck(isAchieved: true, summary: "Done.")
+        let session = makeSession(intelligence: intelligence)
+
+        await session.run()
+
+        #expect(session.phase == .completed)
+    }
+}
+
+@Suite("Plan hygiene")
+struct PlanHygieneTests {
+
+    @Test("Steps that merely open an app are dropped")
+    func dropsOpeningSteps() {
+        let plan = TaskPlan(intents: ["Open Calculator", "Launch the app", "The display shows 12"])
+        #expect(plan.steps.map(\.intent) == ["The display shows 12"])
+    }
+
+    @Test("Steps repeated back to back are collapsed")
+    func collapsesRepeats() {
+        let plan = TaskPlan(intents: ["Enter 12", "enter 12", "Press equals"])
+        #expect(plan.steps.map(\.intent) == ["Enter 12", "Press equals"])
+    }
+
+    @Test("Opening something that is not an app is real work, and kept")
+    func keepsRealWork() {
+        #expect(!TaskPlan.isOpeningAnApp("Open the file", applications: ["Calculator", "Finder"]))
+        #expect(!TaskPlan.isOpeningAnApp("Open the entry for Atlas", applications: ["Calculator"]))
+        #expect(TaskPlan.isOpeningAnApp("Open Calculator", applications: ["Calculator"]))
+        #expect(TaskPlan.isOpeningAnApp("Launch the app", applications: []))
     }
 }

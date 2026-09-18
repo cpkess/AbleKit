@@ -115,20 +115,69 @@ public enum VerificationVerdict: String, Sendable {
     case inconclusive
 }
 
+@Generable(description: "An ordered plan of the work a goal needs")
+public struct TaskPlanDraft: Sendable {
+    @Guide(
+        description:
+            "Between 2 and 8 short sub-goals, in order, each naming one thing that must be true on screen before the next"
+    )
+    public var steps: [String]
+
+    public init(steps: [String]) {
+        self.steps = steps
+    }
+}
+
+@Generable(description: "Whether the user's goal has been reached")
+public struct GoalCheckDraft: Sendable {
+    // Evidence first, on purpose: guided generation fills fields in order, so the model must name
+    // what it can see before it judges. Asked for the verdict first, it echoed the goal back as
+    // though it had happened.
+    @Guide(
+        description:
+            "What on the screen right now shows the goal was carried out, quoting it; or what is missing"
+    )
+    public var evidence: String
+
+    @Guide(description: "True only if the evidence above shows everything the goal asks for is done")
+    public var isAchieved: Bool
+
+    @Guide(description: "One short sentence telling the user what was accomplished")
+    public var summary: String
+
+    public init(evidence: String = "", isAchieved: Bool, summary: String = "") {
+        self.evidence = evidence
+        self.isAchieved = isAchieved
+        self.summary = summary
+    }
+}
+
 @Generable(description: "A judgement about whether an action worked")
 public struct VerificationDraft: Sendable {
-    @Guide(description: "The verdict")
+    @Guide(description: "One short sentence naming what changed on screen, quoting what you can see")
+    public var reason: String
+
+    @Guide(description: "The verdict on the action itself")
     public var verdict: VerificationVerdict
 
-    @Guide(description: "One short sentence naming what you observed that settles it")
-    public var reason: String
+    @Guide(
+        description:
+            "Whether the screen now shows the current sub-goal is finished, so the next one can start"
+    )
+    public var completedSubGoal: Bool
 
     @Guide(description: "Whether trying the same action again is worth it")
     public var shouldRetry: Bool
 
-    public init(verdict: VerificationVerdict, reason: String, shouldRetry: Bool = false) {
-        self.verdict = verdict
+    public init(
+        reason: String,
+        verdict: VerificationVerdict,
+        completedSubGoal: Bool = false,
+        shouldRetry: Bool = false
+    ) {
         self.reason = reason
+        self.verdict = verdict
+        self.completedSubGoal = completedSubGoal
         self.shouldRetry = shouldRetry
     }
 }

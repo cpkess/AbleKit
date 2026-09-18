@@ -151,10 +151,85 @@ public struct AppleIntelligenceProvider: IntelligenceProvider {
         }
     }
 
+    // MARK: - Planning the task
+
+    public func makePlan(goal: String, context: DesktopContext) async throws -> [String] {
+        try await plan(
+            instructions: PromptBuilder.planningOutlineInstructions,
+            prompt: { prompts, budget in
+                prompts.planOutlinePrompt(goal: goal, context: context)
+            }
+        )
+    }
+
+    public func revisePlan(goal: String, plan taskPlan: TaskPlan, context: DesktopContext, reason: String)
+        async throws -> [String]
+    {
+        try await plan(
+            instructions: PromptBuilder.revisionInstructions,
+            prompt: { prompts, budget in
+                prompts.revisionPrompt(goal: goal, plan: taskPlan, context: context, reason: reason)
+            }
+        )
+    }
+
+    private func plan(
+        instructions: String,
+        prompt build: @escaping (PromptBuilder, PromptBuilder.Budget) -> String
+    ) async throws -> [String] {
+        try await withFallback { (location) async throws(IntelligenceError) -> [String] in
+            let draft = try await fitting(
+                on: location,
+                instructions: instructions,
+                schema: TaskPlanDraft.generationSchema,
+                prompt: { budget in build(prompts(for: location, budget: budget), budget) },
+                request: { session, prompt in
+                    try await session.respond(
+                        to: prompt, generating: TaskPlanDraft.self, options: Self.verificationOptions
+                    ).content
+                }
+            )
+            return draft.steps.map { $0.trimmed }.filter { !$0.isEmpty }.prefix(8).map { $0 }
+        }
+    }
+
+    // MARK: - Is it done?
+
+    public func isGoalAchieved(goal: String, context: DesktopContext, history: [StepRecord])
+        async throws -> GoalCheck
+    {
+        try await withFallback { (location) async throws(IntelligenceError) -> GoalCheck in
+            let draft = try await fitting(
+                on: location,
+                instructions: PromptBuilder.goalCheckInstructions,
+                schema: GoalCheckDraft.generationSchema,
+                prompt: { budget in
+                    prompts(for: location, budget: budget)
+                        .goalCheckPrompt(goal: goal, context: context, history: history)
+                },
+                request: { session, prompt in
+                    try await session.respond(
+                        to: prompt, generating: GoalCheckDraft.self, options: Self.verificationOptions
+                    ).content
+                }
+            )
+            guard draft.isAchieved else { return .notYet }
+            // Checked against what can be observed, because the model claims completion it cannot
+            // support: "a new folder named Eval Folder was created" while the screen read
+            // "untitled folder", and a finished calculation with an untouched Calculator.
+            if GoalEvidence.contradiction(ofCompletedGoal: goal, in: context) != nil {
+                return .notYet
+            }
+            let summary = draft.summary.trimmed
+            return GoalCheck(isAchieved: true, summary: summary.isEmpty ? "Done." : summary)
+        }
+    }
+
     // MARK: - Verification
 
     public func verify(
         action: DesktopAction,
+        subGoal: String?,
         before: DesktopContext,
         after: DesktopContext
     ) async throws -> VerificationResult {
@@ -165,7 +240,7 @@ public struct AppleIntelligenceProvider: IntelligenceProvider {
                 schema: VerificationDraft.generationSchema,
                 prompt: { budget in
                     prompts(for: location, budget: budget)
-                        .verificationPrompt(action: action, before: before, after: after)
+                        .verificationPrompt(action: action, subGoal: subGoal, before: before, after: after)
                 },
                 request: { session, prompt in
                     try await session.respond(
@@ -176,7 +251,8 @@ public struct AppleIntelligenceProvider: IntelligenceProvider {
             return VerificationResult(
                 outcome: draft.verdict.outcome,
                 reason: draft.reason.trimmed.isEmpty ? "No detail given." : draft.reason.trimmed,
-                shouldRetry: draft.shouldRetry
+                shouldRetry: draft.shouldRetry,
+                completedSubGoal: draft.completedSubGoal
             )
         }
     }

@@ -44,6 +44,15 @@ public struct PlannedStepDecoder: Sendable {
             guard let name = subject else {
                 throw .undecodableStep("openApplication needs the application's name as its subject.")
             }
+            // Opening the app that is already in front does nothing, and the planner proposes it
+            // when it cannot think of a next step — twenty-four times in one live run.
+            if let frontmost = context.frontmostApplication?.localizedName,
+                Self.namesSameApplication(name, frontmost)
+            {
+                throw .undecodableStep(
+                    "\(frontmost) is already open and in front. Work in it: act on one of its controls or menus."
+                )
+            }
             return .openApplication(ApplicationReference(name: name))
 
         case .chooseMenuItem:
@@ -250,7 +259,13 @@ public struct PlannedStepDecoder: Sendable {
             throw .undecodableStep("There are no readable controls in this app to act on.")
         }
         let identifier = Self.stripBrackets(raw)
-        if let element = snapshot.element(withID: identifier) {
+        // Only the controls the planner was shown. Resolving against every element in the tree let
+        // an invented id land on something unlabelled that was never offered: a live run pressed
+        // three "untitled" buttons in Calculator while the numbered ones sat in the prompt.
+        if let element = snapshot.interactiveElements.first(where: { $0.id == identifier }) {
+            return element
+        }
+        if let element = snapshot.element(withID: identifier), element.bestLabel != nil {
             return element
         }
         // The model may have quoted the label instead of the id.
@@ -282,11 +297,16 @@ public struct PlannedStepDecoder: Sendable {
             }
         }
         let elements = context.accessibility?.elements ?? []
-        let hasFocusedInput = elements.contains { $0.isFocused && $0.isTextInput }
-        let hasInputs = elements.contains { $0.isTextInput && $0.isEnabled }
-        if hasInputs && !hasFocusedInput {
+        if elements.contains(where: { $0.isFocused && $0.isTextInput }) { return nil }
+
+        // With exactly one field on screen, there is nothing to be ambiguous about — and refusing
+        // here cost a live run its task: Finder had just created a folder with its name ready to be
+        // typed, and AbleKit refused to type twice in a row.
+        let inputs = elements.filter { $0.isTextInput && $0.isEnabled && $0.frame.width > 0 }
+        if inputs.count == 1 { return inputs[0] }
+        if inputs.count > 1 {
             throw .undecodableStep(
-                "No field has focus, so the text would go nowhere useful. Put the id of the field to type into in field."
+                "There are \(inputs.count) fields and none has the cursor, so the text could go anywhere. Put the id of the field to type into in field."
             )
         }
         return nil
@@ -309,6 +329,25 @@ public struct PlannedStepDecoder: Sendable {
             return .point(display.bounds.center)
         }
         throw .undecodableStep("There is nowhere to scroll: no window or display was found.")
+    }
+
+    /// Whether two names refer to the same application, allowing for the loose ways models write
+    /// them ("Calculator", "the Calculator app", "System Preferences" for System Settings).
+    static func namesSameApplication(_ one: String, _ other: String) -> Bool {
+        func normalize(_ value: String) -> String {
+            var text = value.lowercased()
+            for noise in ["the ", " app", " application", ".app"] {
+                text = text.replacingOccurrences(of: noise, with: " ")
+            }
+            return text.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).joined(separator: " ")
+        }
+        let first = normalize(one)
+        let second = normalize(other)
+        if first == second { return true }
+        let locator = ApplicationLocator()
+        let firstBundle = locator.bundleIdentifier(for: ApplicationReference(name: first))
+        let secondBundle = locator.bundleIdentifier(for: ApplicationReference(name: second))
+        return firstBundle != nil && firstBundle == secondBundle
     }
 
     static func stripBrackets(_ raw: String) -> String {

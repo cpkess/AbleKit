@@ -132,6 +132,23 @@ stop-task:
 	@scripts/command.sh stop
 
 # make ask GOAL="Open System Settings"   (Debug builds only)
+# make plan GOAL="..."     Plan one step for the current screen and print it, without acting
+.PHONY: plan
+plan:
+	@test -n "$(GOAL)" || { echo 'usage: make plan GOAL="..."'; exit 1; }
+	@scripts/command.sh plan "$(GOAL)"
+	@sleep 6
+	@/usr/bin/log show --last 10s --style compact --predicate 'subsystem == "$(BUNDLE_ID)" AND eventMessage BEGINSWITH "PLAN"' \
+	    | sed 's/^.*\[com\.ablekit\.AbleKit:[A-Za-z]*\] //' | tail -1
+
+# make prompt GOAL="..."   Show what the model is shown for the current screen (Debug builds)
+.PHONY: prompt
+prompt:
+	@test -n "$(GOAL)" || { echo 'usage: make prompt GOAL="..."'; exit 1; }
+	@scripts/command.sh prompt "$(GOAL)"
+	@sleep 2
+	@cat /tmp/ablekit-prompt.txt
+
 .PHONY: ask
 ask:
 	@test -n "$(GOAL)" || { echo 'usage: make ask GOAL="Open System Settings"'; exit 1; }

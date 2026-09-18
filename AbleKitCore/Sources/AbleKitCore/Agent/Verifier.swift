@@ -21,15 +21,30 @@ public struct Verifier: Sendable {
 
     public func verify(
         action: DesktopAction,
+        subGoal: String? = nil,
         before: DesktopContext,
         after: DesktopContext
     ) async -> VerificationResult {
+        // A deterministic verdict settles whether the action worked, but not whether it finished
+        // the sub-goal — only the model can judge that — so the model is still asked when there is
+        // a sub-goal to check and the action did something.
         if let deterministic = Self.deterministicVerdict(action: action, before: before, after: after) {
-            return deterministic
+            guard subGoal != nil, deterministic.outcome != .failed else { return deterministic }
+            let checkpoint = try? await intelligence.verify(
+                action: action, subGoal: subGoal, before: before, after: after
+            )
+            return VerificationResult(
+                outcome: deterministic.outcome,
+                reason: deterministic.reason,
+                shouldRetry: deterministic.shouldRetry,
+                completedSubGoal: checkpoint?.completedSubGoal ?? false
+            )
         }
 
         do {
-            let judgement = try await intelligence.verify(action: action, before: before, after: after)
+            let judgement = try await intelligence.verify(
+                action: action, subGoal: subGoal, before: before, after: after
+            )
             // The model is the least reliable judge on the ladder. In the first live evaluation it
             // watched File › New Folder create a folder and called that a failure, and three such
             // verdicts end a task. A "failed" from the model when the screen visibly changed is
@@ -37,7 +52,11 @@ public struct Verifier: Sendable {
             // react to it, but the task is not ended on the model's say-so. "Nothing changed" is
             // still a hard failure — that one was decided above, from the system, not the model.
             if judgement.outcome == .failed, before.stateFingerprint != after.stateFingerprint {
-                return .inconclusive("Something changed, but perhaps not as intended: \(judgement.reason)")
+                return VerificationResult(
+                    outcome: .inconclusive,
+                    reason: "Something changed, but perhaps not as intended: \(judgement.reason)",
+                    completedSubGoal: judgement.completedSubGoal
+                )
             }
             return judgement
         } catch {

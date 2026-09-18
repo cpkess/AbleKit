@@ -96,6 +96,9 @@ public struct PromptBuilder: Sendable {
     public static let planningInstructions = """
         You decide the single next step for AbleKit, a macOS automation agent.
 
+        When a plan is shown, work only on the step marked \u{2192}. The plan was written from this \
+        screen; follow it unless the screen shows it no longer fits.
+
         Ask these in order, and stop at the first that applies:
 
         1. Is the goal already achieved? Then complete. Never act merely to confirm what is \
@@ -129,6 +132,9 @@ public struct PromptBuilder: Sendable {
         step. Never type the answer in yourself.
         - If the controls and menus do not show what you need — a document's content, a list drawn \
         by the app — use readScreen, and the text on screen will be listed next time.
+        - Never open or switch to the app that is already in front. It is open; work in it.
+        - Do the parts of a goal in the order it states them. Finish the work before copying, \
+        saving or sending the result.
         - If a field or display already holds something that would spoil the result, clear it first.
         - Prefer the least risky action that makes progress. Never guess at a destructive step.
         - Never repeat a step the history shows already failed; find a different route.
@@ -166,8 +172,101 @@ public struct PromptBuilder: Sendable {
           kind: askCopilot, subject: "What are the risks for this programme?"
         """
 
+    /// The standing instructions for planning a task.
+    public static let planningOutlineInstructions = """
+        Write the short ordered list of things that must become true on screen for the user's goal \
+        to be done.
+
+        Between two and eight steps. Write each one in plain words, as you would tell a person what \
+        to achieve — not as a command, a menu path, or the name of an action. One piece of work \
+        each, short enough to check by looking at the screen.
+
+        Do not include opening or switching to an app: that is already handled. Never repeat a \
+        step. Add nothing the goal did not ask for.
+
+        For "work out 12 times 7 in Calculator, then copy the result":
+          1. The display shows 12
+          2. Multiply is chosen
+          3. The display shows 7
+          4. The result is showing
+          5. The result is on the clipboard
+        """
+
+    /// The prompt for planning a task.
+    public func planOutlinePrompt(goal: String, context: DesktopContext) -> String {
+        var sections = ["THE GOAL: \(goal)"]
+        sections.append(describeDesktop(context))
+        if let hints = GoalAnalysis(goal: goal, context: context).promptSection {
+            sections.append(hints)
+        }
+        if let elements = describeElements(context) { sections.append(elements) }
+        if let menus = describeMenus(context) { sections.append(menus) }
+        sections.append("What has to become true, in order?")
+        return sections.joined(separator: "\n\n")
+    }
+
+    /// The standing instructions for rewriting the rest of a plan.
+    public static let revisionInstructions = """
+        A plan is being reworked because it stopped matching the screen. Write what still has to \
+        become true, from here, in at most six short steps.
+
+        Take the screen as it is now. Do not repeat work the plan already shows as done, and do not \
+        simply restate the step that was not working — find another way to reach it, or say what has \
+        to happen first.
+        """
+
+    /// The prompt for rewriting the rest of a plan.
+    public func revisionPrompt(
+        goal: String, plan: TaskPlan, context: DesktopContext, reason: String
+    ) -> String {
+        var sections = ["THE GOAL: \(goal)"]
+        sections.append("THE PLAN SO FAR (\u{2713} done, \u{2192} stuck):\n\(plan.description())")
+        sections.append("WHY IT IS BEING REWORKED: \(reason)")
+        sections.append(describeDesktop(context))
+        if let elements = describeElements(context) { sections.append(elements) }
+        if let menus = describeMenus(context) { sections.append(menus) }
+        if let screenText = describeScreenText(context) { sections.append(screenText) }
+        sections.append("What still has to become true, in order?")
+        return sections.joined(separator: "\n\n")
+    }
+
+    /// The standing instructions for judging whether the goal is reached.
+    public static let goalCheckInstructions = """
+        You decide one thing only: does the screen show that everything the user asked for has \
+        already been done?
+
+        Judge the screen in front of you, not the steps that were taken. A step that ran is not \
+        proof of its result. First write what you can actually see that shows the work is done, \
+        quoting the words on screen; then answer.
+
+        Answer no unless the evidence is there. In particular:
+        - opening an app is not doing the thing asked for in it;
+        - a document, folder or item still showing its default name has not been named;
+        - a calculation is not done until its result is on screen;
+        - if the goal asks for several things, every one of them must be done.
+
+        Judge the goal as written, and nothing more. Do not invent requirements it does not state.
+
+        Being wrong here is expensive: the task stops, and the user is told it succeeded.
+        """
+
+    /// The prompt for judging whether the goal is reached.
+    public func goalCheckPrompt(goal: String, context: DesktopContext, history: [StepRecord]) -> String {
+        var sections = ["THE GOAL: \(goal)"]
+        sections.append(describeDesktop(context))
+        if let elements = describeElements(context) { sections.append(elements) }
+        if let screenText = describeScreenText(context) { sections.append(screenText) }
+        if let steps = describeHistory(history) { sections.append(steps) }
+        sections.append("Has everything the goal asks for been done?")
+        return sections.joined(separator: "\n\n")
+    }
+
     /// The standing instructions given to the verifier.
     public static let verificationInstructions = """
+        You are also the checkpoint in a plan: as well as judging the action, say whether the screen \
+        now shows the piece of work being done is finished, so the next one can start. Judge that \
+        from the screen, not from the action having run.
+
         You judge whether a macOS action did what it was meant to do, by comparing the screen \
         before and after.
 
@@ -205,21 +304,50 @@ public struct PromptBuilder: Sendable {
             sections.append(gathered)
         }
 
+        if let plan = context.plan, !plan.isEmpty {
+            sections.append(
+                """
+                THE PLAN (\u{2713} done, \u{2192} what you are doing now):
+                \(plan.description())
+                """
+            )
+            if let current = plan.current {
+                sections.append(
+                    """
+                    DO THIS NOW: \(current.intent)
+
+                    Choose the single next action for that, and nothing further ahead. The steps \
+                    after it are not yours to do yet.
+                    """
+                )
+            }
+        }
+
         if let history = describeHistory(context.history) {
             sections.append(history)
         }
 
-        sections.append("What is the single next step?")
+        // Always ends with the question, and with the sub-goal restated in it: the prompt used to
+        // trail off after the plan, and the model answered a different part of the task.
+        if let current = context.plan?.current {
+            sections.append("What single action brings \u{201C}\(current.intent)\u{201D} about?")
+        } else {
+            sections.append("What is the single next step?")
+        }
         return sections.joined(separator: "\n\n")
     }
 
     /// Builds the verification prompt.
     public func verificationPrompt(
         action: DesktopAction,
+        subGoal: String? = nil,
         before: DesktopContext,
         after: DesktopContext
     ) -> String {
         var sections: [String] = []
+        if let subGoal {
+            sections.append("WHAT IS BEING WORKED ON: \(subGoal)")
+        }
         sections.append("ACTION TAKEN: \(action.summary)")
         sections.append("BEFORE:\n\(describeDesktop(before, heading: false))")
         sections.append("AFTER:\n\(describeDesktop(after, heading: false))")
@@ -234,7 +362,11 @@ public struct PromptBuilder: Sendable {
             sections.append(changes)
         }
 
-        sections.append("Did the action do what it was meant to?")
+        sections.append(
+            subGoal == nil
+                ? "Did the action do what it was meant to?"
+                : "Did the action do what it was meant to, and does the screen now show \u{201C}\(subGoal!)\u{201D} is finished?"
+        )
         return sections.joined(separator: "\n\n")
     }
 
@@ -246,7 +378,9 @@ public struct PromptBuilder: Sendable {
 
         if let app = context.frontmostApplication {
             let bundle = app.bundleIdentifier.map { " (\($0))" } ?? ""
-            lines.append("Frontmost app: \(app.localizedName)\(bundle)")
+            // "already open, do not open it again" is spelled out because the planner kept
+            // proposing to open the app it was looking at.
+            lines.append("Frontmost app: \(app.localizedName)\(bundle) \u{2014} already open and in front")
         } else {
             lines.append("Frontmost app: unknown")
         }

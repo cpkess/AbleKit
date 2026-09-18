@@ -257,11 +257,19 @@ struct VerifierTests {
             func planNextStep(goal: String, context: AgentContext) async throws -> PlannedStep {
                 throw IntelligenceError.cancelled
             }
-            func verify(action: DesktopAction, before: DesktopContext, after: DesktopContext)
-                async throws -> VerificationResult
-            {
+            func verify(
+                action: DesktopAction, subGoal: String?, before: DesktopContext, after: DesktopContext
+            ) async throws -> VerificationResult {
                 throw IntelligenceError.underlying("model exploded")
             }
+            func isGoalAchieved(goal: String, context: DesktopContext, history: [StepRecord])
+                async throws -> GoalCheck
+            { .notYet }
+            func makePlan(goal: String, context: DesktopContext) async throws -> [String] { [] }
+            func revisePlan(goal: String, plan: TaskPlan, context: DesktopContext, reason: String)
+                async throws -> [String]
+            { [] }
+
         }
         let before = context(app: "Tracker", bundle: "com.example", window: "before")
         let after = context(app: "Tracker", bundle: "com.example", window: "after")
@@ -281,9 +289,16 @@ struct ModelVerdictTests {
         func planNextStep(goal: String, context: AgentContext) async throws -> PlannedStep {
             throw IntelligenceError.cancelled
         }
-        func verify(action: DesktopAction, before: DesktopContext, after: DesktopContext)
-            async throws -> VerificationResult
-        { verdict }
+        func verify(
+            action: DesktopAction, subGoal: String?, before: DesktopContext, after: DesktopContext
+        ) async throws -> VerificationResult { verdict }
+        func isGoalAchieved(goal: String, context: DesktopContext, history: [StepRecord])
+            async throws -> GoalCheck
+        { .notYet }
+        func makePlan(goal: String, context: DesktopContext) async throws -> [String] { [] }
+        func revisePlan(goal: String, plan: TaskPlan, context: DesktopContext, reason: String)
+            async throws -> [String]
+        { [] }
     }
 
     @Test("A model's failure verdict on a visibly changed screen is treated as unsettled")

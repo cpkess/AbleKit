@@ -29,6 +29,8 @@ public final class AgentSession {
     public private(set) var termination: TaskTermination?
     /// Information gathered along the way, such as a Copilot answer.
     public private(set) var gatheredInformation: [GatheredInformation] = []
+    /// The plan the task is working through, and where it has got to.
+    public private(set) var plan = TaskPlan(intents: [])
     /// The most recent context, for the debug interface.
     public private(set) var latestContext: DesktopContext?
     /// Where the most recent step was reasoned, so the interface can show when the cloud was used.
@@ -157,10 +159,45 @@ public final class AgentSession {
             // Plan.
             advance(to: .planning)
             currentActivity = "Deciding what to do"
+            // Written from the screen of the app the work happens in, and reworked at checkpoints.
+            //
+            // Waiting matters: a task begun while another app had focus was planned against that
+            // app, inventing menus it had seen there. If the goal names an app that is not in
+            // front, the plan waits until it is — the first step will be opening it.
+            let waitingForApp =
+                GoalAnalysis(goal: goal, context: context).applicationToOpen != nil
+                && stepIndex < Self.maximumStepsBeforePlanning
+            if plan.isEmpty, !waitingForApp {
+                advance(to: .planning)
+                currentActivity = "Working out what to do"
+                if let intents = try? await intelligence.makePlan(goal: goal, context: context),
+                    !intents.isEmpty
+                {
+                    plan = TaskPlan(intents: intents)
+                }
+            }
+
+            // A sub-goal that will not come off is the sign that the plan, not the action, is
+            // wrong. Reworking what remains is cheaper than grinding through the step limit.
+            if plan.currentStepIsStuck(afterAttempts: limits.attemptsPerPlanStep),
+                plan.revisions < limits.maximumPlanRevisions
+            {
+                advance(to: .planning)
+                currentActivity = "Rethinking the plan"
+                let stuck = plan.current?.intent ?? ""
+                if let intents = try? await intelligence.revisePlan(
+                    goal: goal, plan: plan, context: context,
+                    reason: "\(stuck.quoted) has taken several actions without finishing."
+                ), !intents.isEmpty {
+                    plan.replaceRemaining(with: intents)
+                }
+            }
+
             let agentContext = AgentContext(
                 goal: goal,
                 desktop: context,
                 history: history,
+                plan: plan.isEmpty ? nil : plan,
                 gatheredInformation: gatheredInformation,
                 stepIndex: stepIndex,
                 stepLimit: limits.maximumSteps
@@ -198,10 +235,23 @@ public final class AgentSession {
             // effect is the same however often they run, repeating a verified success achieves
             // nothing, so it is not executed. The first time, the planner is told why; the second
             // time, the work is evidently done and the task completes.
-            if let earlier = alreadySucceeded(step.action) {
+            if alreadySucceeded(step.action) != nil {
                 redundantProposals += 1
-                if redundantProposals >= 2 {
-                    finish(.completed(Self.completionSummary(for: earlier.action)))
+                // Asked rather than assumed. Completing on a second redundant proposal once
+                // declared "use Calculator to work out 12 times 7" finished the moment Calculator
+                // opened.
+                if let check = try? await intelligence.isGoalAchieved(
+                    goal: goal, context: context, history: history
+                ), check.isAchieved {
+                    finish(.completed(check.summary))
+                    return
+                }
+                // Counted like any other repeat. Without this the skipped proposals were invisible
+                // to the repeat detector, and one live task proposed the same finished step
+                // twenty-four times before the step limit ended it.
+                loopDetector.record(action: step.action, fingerprint: context.stateFingerprint)
+                if loopDetector.wouldRepeat(step.action) {
+                    finish(.limitReached(.repeatedActions))
                     return
                 }
                 history.append(
@@ -212,7 +262,7 @@ public final class AgentSession {
                         classification: .routine,
                         capability: .control,
                         outcome: .skipped(
-                            "Not repeated: this already worked. If the goal is achieved, complete."
+                            "Not repeated: this already worked. Do something else, or complete."
                         ),
                         resultingFingerprint: context.stateFingerprint
                     )
@@ -261,6 +311,7 @@ public final class AgentSession {
             }
 
             // Act.
+            plan.recordAttempt()
             advance(to: .acting)
             pendingAction = step.action
             currentActivity = step.action.summary
@@ -291,9 +342,17 @@ public final class AgentSession {
                 latestContext = after
                 resultingFingerprint = after.stateFingerprint
                 let verification = await verifier.verify(
-                    action: report.action, before: context, after: after
+                    action: report.action,
+                    subGoal: plan.current?.intent,
+                    before: context,
+                    after: after
                 )
                 outcome = Self.outcome(from: verification)
+                // The checkpoint: the same look that judged the action says whether the piece of
+                // work is finished, so the plan can move on without another question.
+                if verification.completedSubGoal, !outcome.isFailure {
+                    plan.completeCurrent()
+                }
             } else {
                 outcome = report.outcome
             }
@@ -312,6 +371,42 @@ public final class AgentSession {
                     reasonedBy: step.reasonedBy
                 )
             )
+
+            // The plan is through: check the goal against the screen before saying so. Asked once,
+            // here, rather than after every step — the plan already says what remains.
+            if plan.isComplete, let after = latestContext {
+                advance(to: .verifying)
+                currentActivity = "Checking the task is finished"
+                if let check = try? await intelligence.isGoalAchieved(
+                    goal: goal, context: after, history: history
+                ), check.isAchieved {
+                    finish(.completed(check.summary))
+                    return
+                }
+                // The plan says it is done and the screen disagrees, so the plan was wrong.
+                if plan.revisions < limits.maximumPlanRevisions {
+                    if let intents = try? await intelligence.revisePlan(
+                        goal: goal, plan: plan, context: after,
+                        reason: "every step is done but the goal is not met."
+                    ), !intents.isEmpty {
+                        plan.replaceRemaining(with: intents)
+                    }
+                } else {
+                    finish(.failed("AbleKit worked through its plan but the task is not done."))
+                    return
+                }
+            }
+
+            // Without a plan there is no checkpoint, so the goal is checked after each step.
+            if plan.isEmpty, outcome.isSuccess || outcome.isInconclusive, let after = latestContext {
+                advance(to: .verifying)
+                if let check = try? await intelligence.isGoalAchieved(
+                    goal: goal, context: after, history: history
+                ), check.isAchieved {
+                    finish(.completed(check.summary))
+                    return
+                }
+            }
 
             // A declined confirmation is the user saying no, which ends the task rather than
             // sending the agent looking for another way to do the thing they just refused.
@@ -365,6 +460,10 @@ public final class AgentSession {
         currentActivity = "Reading the screen"
         return await collector.collect(options: .full)
     }
+
+    /// After this many steps a plan is written regardless, so a task can never run entirely
+    /// unplanned because the app it names never comes forward.
+    static let maximumStepsBeforePlanning = 3
 
     private func breachedLimit(stepIndex: Int) -> TaskTermination.LimitKind? {
         if stepIndex >= limits.maximumSteps { return .steps }

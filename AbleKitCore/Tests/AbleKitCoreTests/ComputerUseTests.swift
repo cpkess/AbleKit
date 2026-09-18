@@ -243,10 +243,21 @@ struct TypingTests {
         #expect(step.action == .typeText("Chris", into: name))
     }
 
-    @Test("Typing blind into a window with unfocused fields is refused")
-    func blindTypingRefused() {
+    @Test("With one field on screen, typing goes there without being told")
+    func singleFieldIsUnambiguous() throws {
         let draft = PlannedStepDraft(kind: .typeText, subject: "Chris", rationale: "name")
-        #expect(throws: IntelligenceError.self) { try decoder.decode(draft, context: desktop(elements: [name])) }
+        #expect(try decoder.decode(draft, context: desktop(elements: [name])).action == .typeText("Chris", into: name))
+    }
+
+    @Test("With several fields and none focused, typing is refused")
+    func blindTypingRefused() {
+        let other = ElementReference(
+            id: "e3", role: "AXTextField", title: "Email", frame: CGRect(x: 10, y: 40, width: 200, height: 24)
+        )
+        let draft = PlannedStepDraft(kind: .typeText, subject: "Chris", rationale: "name")
+        #expect(throws: IntelligenceError.self) {
+            try decoder.decode(draft, context: desktop(elements: [name, other]))
+        }
     }
 
     @Test("Typing into the field that already has focus needs no name")
@@ -360,5 +371,68 @@ struct SubjectTests {
         )
         let draft = PlannedStepDraft(kind: .typeText, subject: "12*7=", field: "e9", rationale: "compute")
         #expect(try decoder.decode(draft, context: desktop(elements: [equals])).action == .typeText("12*7="))
+    }
+}
+
+@Suite("Resolving control ids")
+struct ControlResolutionTests {
+    private let decoder = PlannedStepDecoder()
+
+    @Test("An id the planner was never shown is refused, not resolved to something unlabelled")
+    func hiddenElementsAreNotTargets() throws {
+        let hidden = ElementReference(
+            id: "e5", role: "AXButton", frame: CGRect(x: 0, y: 0, width: 10, height: 10), actions: []
+        )
+        let shown = ElementReference(
+            id: "e13", role: "AXButton", elementDescription: "7",
+            frame: CGRect(x: 40, y: 40, width: 40, height: 40), actions: ["AXPress"]
+        )
+        let context = desktop(elements: [hidden, shown])
+        #expect(throws: IntelligenceError.self) {
+            try decoder.decode(PlannedStepDraft(kind: .clickElement, subject: "e5", rationale: "x"), context: context)
+        }
+        #expect(
+            try decoder.decode(PlannedStepDraft(kind: .clickElement, subject: "e13", rationale: "7"), context: context)
+                .action == .click(target: .element(shown))
+        )
+    }
+
+    @Test("Different unlabelled controls are told apart by where they are")
+    func unlabelledControlsAreDistinct() {
+        let first = ElementReference(id: "a", role: "AXButton", frame: CGRect(x: 0, y: 0, width: 10, height: 10))
+        let second = ElementReference(id: "b", role: "AXButton", frame: CGRect(x: 90, y: 90, width: 10, height: 10))
+        var detector = LoopDetector(limits: TaskLimits(maximumRetriesPerAction: 1))
+        detector.record(action: .click(target: .element(first)), fingerprint: nil)
+        detector.record(action: .click(target: .element(first)), fingerprint: nil)
+        #expect(detector.wouldRepeat(.click(target: .element(first))))
+        #expect(!detector.wouldRepeat(.click(target: .element(second))))
+    }
+}
+
+@Suite("What the planner is offered")
+struct OfferedControlsTests {
+
+    @Test("A control with no name is not offered")
+    func unnamedControlsAreNotOffered() {
+        let unnamed = ElementReference(
+            id: "e32", role: "AXButton", frame: CGRect(x: 0, y: 0, width: 20, height: 20),
+            actions: ["AXPress"]
+        )
+        let named = ElementReference(
+            id: "e13", role: "AXButton", elementDescription: "7",
+            frame: CGRect(x: 30, y: 0, width: 20, height: 20), actions: ["AXPress"]
+        )
+        let snapshot = AccessibilitySnapshot(bundleIdentifier: nil, elements: [unnamed, named])
+        #expect(snapshot.interactiveElements.map(\.id) == ["e13"])
+    }
+
+    @Test("A text field with no name is still offered")
+    func unnamedFieldsAreOffered() {
+        let field = ElementReference(
+            id: "e14", role: "AXTextField", value: "untitled folder",
+            frame: CGRect(x: 0, y: 0, width: 100, height: 20)
+        )
+        let snapshot = AccessibilitySnapshot(bundleIdentifier: nil, elements: [field])
+        #expect(snapshot.interactiveElements.map(\.id) == ["e14"])
     }
 }

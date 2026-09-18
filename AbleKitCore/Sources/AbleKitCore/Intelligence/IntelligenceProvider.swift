@@ -8,6 +8,8 @@ public struct AgentContext: Sendable {
     public let desktop: DesktopContext
     /// What has already been tried, and how it went.
     public let history: [StepRecord]
+    /// The plan this task is working through, and where it has got to.
+    public let plan: TaskPlan?
     /// Text produced by earlier steps — most importantly an AI bridge's answer — which later steps
     /// act on. This is how a Copilot response becomes input to an application.
     public let gatheredInformation: [GatheredInformation]
@@ -19,6 +21,7 @@ public struct AgentContext: Sendable {
         goal: String,
         desktop: DesktopContext,
         history: [StepRecord] = [],
+        plan: TaskPlan? = nil,
         gatheredInformation: [GatheredInformation] = [],
         stepIndex: Int = 0,
         stepLimit: Int = TaskLimits.default.maximumSteps
@@ -26,6 +29,7 @@ public struct AgentContext: Sendable {
         self.goal = goal
         self.desktop = desktop
         self.history = history
+        self.plan = plan
         self.gatheredInformation = gatheredInformation
         self.stepIndex = stepIndex
         self.stepLimit = stepLimit
@@ -90,11 +94,22 @@ public struct VerificationResult: Sendable, Equatable {
     public let reason: String
     /// Whether retrying the same action is worth a step.
     public let shouldRetry: Bool
+    /// Whether the plan's current sub-goal is now satisfied.
+    ///
+    /// Answered here rather than by a separate question, because the verifier is already looking at
+    /// the screen before and after: the checkpoint costs nothing extra.
+    public let completedSubGoal: Bool
 
-    public init(outcome: VerificationOutcome, reason: String, shouldRetry: Bool = false) {
+    public init(
+        outcome: VerificationOutcome,
+        reason: String,
+        shouldRetry: Bool = false,
+        completedSubGoal: Bool = false
+    ) {
         self.outcome = outcome
         self.reason = reason
         self.shouldRetry = shouldRetry
+        self.completedSubGoal = completedSubGoal
     }
 
     public static func succeeded(_ reason: String) -> VerificationResult {
@@ -108,6 +123,20 @@ public struct VerificationResult: Sendable, Equatable {
     public static func inconclusive(_ reason: String) -> VerificationResult {
         VerificationResult(outcome: .inconclusive, reason: reason)
     }
+}
+
+/// Whether the goal has been reached, and what to tell the user if so.
+public struct GoalCheck: Sendable, Equatable {
+    public let isAchieved: Bool
+    /// One sentence for the user, when it is achieved.
+    public let summary: String
+
+    public init(isAchieved: Bool, summary: String = "Done.") {
+        self.isAchieved = isAchieved
+        self.summary = summary
+    }
+
+    public static let notYet = GoalCheck(isAchieved: false)
 }
 
 /// Why the planner could not produce a step.
@@ -163,9 +192,36 @@ public protocol IntelligenceProvider: Sendable {
     /// plan is mostly fiction by its third entry (brief §16).
     func planNextStep(goal: String, context: AgentContext) async throws -> PlannedStep
 
-    /// Judges whether an action did what it was supposed to.
+    /// Writes the ordered sub-goals for a task, by looking at the app before anything is touched.
+    ///
+    /// Planning one action at a time keeps every decision honest about the screen, but leaves the
+    /// model with no sense of where it is in a task with several parts. Asked to "work out 12 times
+    /// 7, then copy the result", it went straight to copying. The plan supplies that structure;
+    /// `AgentSession` holds the position rather than asking the model to re-derive it.
+    func makePlan(goal: String, context: DesktopContext) async throws -> [String]
+
+    /// Rewrites what remains of a plan against the screen as it now is.
+    ///
+    /// Called at a checkpoint: when a sub-goal has taken too many actions, or the screen has gone
+    /// somewhere the plan did not anticipate. Plans are guides, and a guide that no longer matches
+    /// the ground is worse than none.
+    func revisePlan(goal: String, plan: TaskPlan, context: DesktopContext, reason: String)
+        async throws -> [String]
+
+    /// Judges whether the goal has now been reached.
+    ///
+    /// Asked after each step that worked, separately from planning. Left to the planner, this
+    /// decision was made badly in both directions: tasks that were finished carried on pressing
+    /// buttons, and a task that had barely started was declared done. A yes/no question about a
+    /// screen is a much smaller thing to ask of a small model than "what next?", and it is the
+    /// question whose wrong answer costs the most.
+    func isGoalAchieved(goal: String, context: DesktopContext, history: [StepRecord]) async throws
+        -> GoalCheck
+
+    /// Judges whether an action did what it was supposed to, and whether it finished the sub-goal.
     func verify(
         action: DesktopAction,
+        subGoal: String?,
         before: DesktopContext,
         after: DesktopContext
     ) async throws -> VerificationResult

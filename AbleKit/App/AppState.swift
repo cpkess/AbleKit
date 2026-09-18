@@ -182,6 +182,61 @@ final class AppState {
 
     // MARK: - Logging
 
+    #if DEBUG
+        /// Plans one step for the current screen and logs it. Nothing is executed.
+        func logPlan(goal rawGoal: String) async {
+            let parts = rawGoal.components(separatedBy: "|||")
+            let goal = parts[0].trimmingCharacters(in: .whitespaces)
+            let plan =
+                parts.count > 1
+                ? TaskPlan(intents: parts[1].split(separator: ";").map(String.init)) : nil
+            let context = await collector.collect(options: .semantic)
+            do {
+                let step = try await intelligence.planNextStep(
+                    goal: goal, context: AgentContext(goal: goal, desktop: context, plan: plan)
+                )
+                log.notice(
+                    "PLAN: \(step.action.summary, privacy: .public) — \(step.rationale, privacy: .public)"
+                )
+            } catch {
+                log.notice("PLAN failed: \(String(describing: error), privacy: .public)")
+            }
+        }
+
+        /// Logs the planning prompt AbleKit would use for a goal against the current screen.
+        ///
+        /// `goal ||| first step; second step` includes a plan, with the first step current, which is
+        /// what the planner actually sees mid-task.
+        func logPlanningPrompt(goal rawGoal: String) async {
+            let parts = rawGoal.components(separatedBy: "|||")
+            let goal = parts[0].trimmingCharacters(in: .whitespaces)
+            let plan =
+                parts.count > 1
+                ? TaskPlan(intents: parts[1].split(separator: ";").map(String.init)) : nil
+            let context = await collector.collect(options: .semantic)
+            let prompt = PromptBuilder().planningPrompt(
+                goal: goal,
+                context: AgentContext(goal: goal, desktop: context, plan: plan)
+            )
+            // Written to a file, not the log: unified logging truncates a message this long, and a
+            // half-shown prompt is worse than none when the question is what the model saw.
+            let url = URL(fileURLWithPath: "/tmp/ablekit-prompt.txt")
+            try? prompt.write(to: url, atomically: true, encoding: .utf8)
+            log.notice("Prompt written to \(url.path, privacy: .public) (\(prompt.count) characters)")
+        }
+    #endif
+
+    /// Reports whether a control or piece of text matching `text` is on screen.
+    func logProbe(findingControl text: String) async {
+        let context = await collector.collect(options: .semantic)
+        let needle = text.lowercased()
+        let found = (context.accessibility?.elements ?? []).contains { element in
+            [element.bestLabel, element.value].compactMap { $0 }
+                .contains { $0.lowercased().contains(needle) }
+        }
+        log.notice("ProbeControl: \(text, privacy: .public)=\(found ? "yes" : "no", privacy: .public)")
+    }
+
     /// Reports what is frontmost, for checking a task's result from outside it.
     ///
     /// Always public in the log: it is requested explicitly from the terminal, and it reports only
@@ -251,7 +306,19 @@ final class AppState {
         Task { [weak self, weak session] in
             var loggedSteps = 0
             var lastPhase: AgentPhase?
+            var loggedPlanRevisions = -1
             while let session, let self {
+                // Logged whenever it is written or reworked: the plan is the clearest statement of
+                // what AbleKit is about to do.
+                if !session.plan.isEmpty, session.plan.revisions != loggedPlanRevisions {
+                    loggedPlanRevisions = session.plan.revisions
+                    let steps = session.plan.steps.enumerated()
+                        .map { "\($0.offset + 1). \($0.element.intent)" }
+                        .joined(separator: " | ")
+                    log.notice(
+                        "Plan\(loggedPlanRevisions > 0 ? " (reworked)" : "", privacy: .public): \(self.redacted(steps), privacy: .public)"
+                    )
+                }
                 if session.phase != lastPhase {
                     lastPhase = session.phase
                     log.info("Phase: \(session.phase.rawValue, privacy: .public)")

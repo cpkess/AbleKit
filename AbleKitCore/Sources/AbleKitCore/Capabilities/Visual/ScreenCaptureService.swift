@@ -41,6 +41,16 @@ public struct ScreenCaptureService: ScreenCapturing {
         self.permissions = permissions
     }
 
+    /// AbleKit's own windows, which must never appear in what AbleKit reads.
+    ///
+    /// The task window displays the step being worked on — "the display shows 12" — and a capture
+    /// of the whole screen includes it. Read back as screen text, AbleKit's own narration becomes
+    /// evidence about the app it is operating, and the agent starts reasoning about itself.
+    private func ownApplications(in content: SCShareableContent) -> [SCRunningApplication] {
+        let identifier = Bundle.main.bundleIdentifier ?? "com.ablekit.AbleKit"
+        return content.applications.filter { $0.bundleIdentifier == identifier }
+    }
+
     public func captureWindow(ofProcess processIdentifier: pid_t) async throws -> ScreenCapture {
         try requirePermission()
         let content = try await shareableContent()
@@ -72,7 +82,11 @@ public struct ScreenCaptureService: ScreenCapturing {
             throw CapabilityError.executionFailed("No display was found to capture.")
         }
 
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let filter = SCContentFilter(
+            display: display,
+            excludingApplications: ownApplications(in: content),
+            exceptingWindows: []
+        )
         return try await capture(filter: filter, region: display.frame)
     }
 
@@ -98,8 +112,11 @@ public struct ScreenCaptureService: ScreenCapturing {
 
     public func visibleWindows() async -> [WindowInfo] {
         guard let content = try? await shareableContent() else { return [] }
+        let ownIdentifier = Bundle.main.bundleIdentifier ?? "com.ablekit.AbleKit"
         return content.windows
             .filter { $0.isOnScreen && $0.frame.width > 1 && $0.frame.height > 1 }
+            // AbleKit's own panels are not part of the desktop it is reasoning about.
+            .filter { $0.owningApplication?.bundleIdentifier != ownIdentifier }
             .map { window in
                 WindowInfo(
                     windowID: window.windowID,

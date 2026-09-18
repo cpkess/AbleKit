@@ -561,4 +561,85 @@ struct LiveModelTests {
             context: AgentContext(goal: "Click item number 42", desktop: desktop, history: history, stepIndex: 10)
         )
     }
+
+    // MARK: - Knowing when the goal is reached
+
+    @Test("Reaching the Appearance settings counts as done")
+    func goalReachedSettings() async throws {
+        let desktop = appDesktop(
+            app: "System Settings", bundle: "com.apple.systempreferences", window: "Appearance",
+            elements: [
+                ElementReference(id: "e2", role: "AXStaticText", value: "Appearance", frame: CGRect(x: 300, y: 40, width: 200, height: 20)),
+                ElementReference(id: "e3", role: "AXRadioButton", title: "Dark", frame: CGRect(x: 300, y: 100, width: 80, height: 60), actions: ["AXPress"]),
+                ElementReference(id: "e4", role: "AXRadioButton", title: "Light", frame: CGRect(x: 200, y: 100, width: 80, height: 60), actions: ["AXPress"]),
+            ]
+        )
+        let history = [StepRecord(
+            index: 0, action: .chooseMenuItem(path: ["View", "Appearance"]), rationale: "",
+            classification: .routine, capability: .accessibility, outcome: .succeeded
+        )]
+        let check = try await provider.isGoalAchieved(
+            goal: "Open System Settings and go to the Appearance settings",
+            context: desktop, history: history
+        )
+        #expect(check.isAchieved, "said not done: \(check.summary)")
+    }
+
+    @Test("Merely opening Calculator is not working something out")
+    func goalNotReachedCalculator() async throws {
+        let desktop = appDesktop(
+            app: "Calculator", bundle: "com.apple.calculator", window: "Calculator",
+            elements: [
+                ElementReference(id: "e2", role: "AXStaticText", value: "0", frame: CGRect(x: 0, y: 50, width: 200, height: 40)),
+                ElementReference(id: "e3", role: "AXButton", elementDescription: "7", frame: CGRect(x: 0, y: 300, width: 40, height: 40), actions: ["AXPress"]),
+            ]
+        )
+        let history = [StepRecord(
+            index: 0, action: .openApplication(ApplicationReference(name: "Calculator")), rationale: "",
+            classification: .routine, capability: .native, outcome: .succeeded
+        )]
+        let check = try await provider.isGoalAchieved(
+            goal: "Use Calculator to work out 12 times 7, then copy the result",
+            context: desktop, history: history
+        )
+        #expect(!check.isAchieved, "said done: \(check.summary)")
+    }
+
+    @Test("A folder created but still called untitled is not named yet")
+    func goalNotReachedFinder() async throws {
+        let desktop = appDesktop(
+            app: "Finder", bundle: "com.apple.finder", window: "AbleKitEval",
+            elements: [
+                ElementReference(id: "e2", role: "AXStaticText", value: "untitled folder", frame: CGRect(x: 100, y: 200, width: 120, height: 20))
+            ]
+        )
+        let history = [StepRecord(
+            index: 0, action: .chooseMenuItem(path: ["File", "New Folder"]), rationale: "",
+            classification: .routine, capability: .accessibility, outcome: .succeeded
+        )]
+        let check = try await provider.isGoalAchieved(
+            goal: "In the Finder window that is open, create a new folder named Eval Folder",
+            context: desktop, history: history
+        )
+        #expect(!check.isAchieved, "said done: \(check.summary)")
+    }
+
+    @Test("A definition on screen means the word was looked up")
+    func goalReachedDictionary() async throws {
+        let desktop = appDesktop(
+            app: "Dictionary", bundle: "com.apple.Dictionary", window: "Dictionary",
+            elements: [
+                ElementReference(id: "e2", role: "AXTextField", title: "Search", value: "haptic", frame: CGRect(x: 400, y: 20, width: 200, height: 24)),
+                ElementReference(id: "e3", role: "AXStaticText", value: "haptic | ˈhaptik | adjective: relating to the sense of touch", frame: CGRect(x: 100, y: 100, width: 500, height: 60)),
+            ]
+        )
+        let history = [StepRecord(
+            index: 0, action: .typeText("haptic"), rationale: "",
+            classification: .routine, capability: .visual, outcome: .succeeded
+        )]
+        let check = try await provider.isGoalAchieved(
+            goal: "In Dictionary, look up the word haptic", context: desktop, history: history
+        )
+        #expect(check.isAchieved, "said not done: \(check.summary)")
+    }
 }

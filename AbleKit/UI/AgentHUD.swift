@@ -89,9 +89,22 @@ struct AgentHUDView: View {
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
 
+            if let position = session.plan.positionDescription, let current = session.plan.current {
+                // What AbleKit thinks it is doing, and how far through: the plan made visible.
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(position)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                    Text(current.intent)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
             HStack(spacing: 8) {
                 if !session.history.isEmpty {
-                    Text("Step \(session.history.count)")
+                    Text("Action \(session.history.count)")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }

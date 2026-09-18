@@ -63,6 +63,10 @@ final class CommandListener {
             #endif
         case "check-updates":
             delegate.state.updates.checkForUpdates()
+        case "probe-control":
+            // Whether a control or piece of text with this label is on screen, for checking a
+            // task's result from outside it.
+            Task { await delegate.state.logProbe(findingControl: argument) }
         case "probe":
             // What is in front right now, read independently of any task — used by the evaluation
             // suite to check what a task actually did rather than what it claimed.
@@ -82,6 +86,21 @@ final class CommandListener {
                 Task { await delegate.simulateTypingInPalette(argument) }
             #else
                 log.error("type is only available in Debug builds")
+            #endif
+        case "plan":
+            // Plans one step for the current screen and logs it, without carrying it out.
+            #if DEBUG
+                Task { await delegate.state.logPlan(goal: argument) }
+            #else
+                log.error("plan is only available in Debug builds")
+            #endif
+        case "prompt":
+            // Prints the planning prompt for the current screen, acting on nothing. The fastest way
+            // to see what the model is actually being shown.
+            #if DEBUG
+                Task { await delegate.state.logPlanningPrompt(goal: argument) }
+            #else
+                log.error("prompt is only available in Debug builds")
             #endif
         case "ask":
             #if DEBUG

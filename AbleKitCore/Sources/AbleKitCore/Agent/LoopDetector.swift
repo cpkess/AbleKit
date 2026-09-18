@@ -95,8 +95,15 @@ public struct LoopDetector: Sendable {
 
     private static func signature(for target: PointerTarget) -> String {
         switch target {
-        case .point(let point): "pt(\(Int(point.x)),\(Int(point.y)))"
-        case .element(let element): "el(\(element.role):\(element.bestLabel ?? "untitled"))"
+        case .point(let point):
+            return "pt(\(Int(point.x)),\(Int(point.y)))"
+        case .element(let element):
+            // Unlabelled controls fall back to their position, otherwise every unnamed button in a
+            // window looks like the same one — which stopped a task that was pressing different
+            // Calculator keys in turn.
+            let identity = element.bestLabel
+                ?? "at(\(Int(element.frame.midX)),\(Int(element.frame.midY)))"
+            return "el(\(element.role):\(identity))"
         }
     }
 }

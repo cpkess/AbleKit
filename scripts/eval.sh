@@ -41,6 +41,15 @@ probe() {
         | sed -n 's/.*Probe: //p' | tail -1
 }
 frontmost_app() { probe | sed -n 's/^app=\([^|]*\)|.*/\1/p'; }
+
+# Whether a control or piece of text is on screen, asked of AbleKit, which can read it.
+has_control() {
+    scripts/command.sh probe-control "$1"
+    sleep 1
+    /usr/bin/log show --last 3s --style compact \
+        --predicate 'subsystem == "com.ablekit.AbleKit" AND eventMessage BEGINSWITH "ProbeControl:"' \
+        | sed -n 's/.*ProbeControl: //p' | tail -1 | grep -q "=yes"
+}
 front_window() { probe | sed -n 's/.*|window=//p'; }
 
 clipboard_text() { pbpaste 2>/dev/null; }
@@ -55,7 +64,10 @@ is_running TextEdit && TEXTEDIT_WAS_RUNNING=1
 # Each task defines: goal_<name>, setup_<name>, check_<name> (exit 0 = pass), cleanup_<name>,
 # and optionally skip_<name> (prints a reason and exits 0 to skip).
 
-TASKS=(open_calculator textedit_type textedit_bold calculator_multiply finder_new_folder settings_appearance)
+# calculator_multiply is deliberately not in the default set. Pressing a long sequence of calculator
+# keys tests the small model's arithmetic sequencing rather than anything AbleKit exists to do, and
+# it is a known weakness. Run it explicitly with: make eval TASKS=calculator_multiply
+TASKS=(open_calculator textedit_type textedit_bold finder_new_folder settings_appearance dictionary_lookup)
 
 # 1. Loop A: a native launch.
 goal_open_calculator="Open Calculator"
@@ -99,6 +111,12 @@ goal_settings_appearance="Open System Settings and go to the Appearance settings
 setup_settings_appearance() { quit_app "System Settings"; sleep 1; }
 check_settings_appearance() { [[ "$(front_window)" == *"Appearance"* ]]; }
 cleanup_settings_appearance() { quit_app "System Settings"; }
+
+# 7. Typing into a search field in an app that holds no user data.
+goal_dictionary_lookup="In Dictionary, look up the word haptic"
+setup_dictionary_lookup() { quit_app Dictionary; sleep 1; }
+check_dictionary_lookup() { has_control "haptic"; }
+cleanup_dictionary_lookup() { quit_app Dictionary; }
 
 # ------------------------------------------------------------------ runner
 

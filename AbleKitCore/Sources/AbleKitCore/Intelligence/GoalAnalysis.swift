@@ -37,6 +37,10 @@ public struct GoalAnalysis: Sendable, Equatable {
     /// The app that is in front, whose menus and controls the prompt lists.
     public let frontmostApplication: String?
 
+    static let containerRoles: Set<String> = [
+        "AXWindow", "AXApplication", "AXSheet", "AXDrawer", "AXToolbar", "AXGroup", "AXSplitGroup",
+    ]
+
     /// Shortest label worth matching. Shorter words ("OK", "New") appear in too many goals by
     /// accident to be evidence of anything.
     static let minimumLabelLength = 4
@@ -51,6 +55,11 @@ public struct GoalAnalysis: Sendable, Equatable {
         var candidates: [Mention] = []
 
         for element in context.accessibility?.interactiveElements ?? [] where element.isEnabled {
+            // Windows and the application itself are not things to act on, and their titles are
+            // usually the app's name — which the goal mentions constantly. Offered as a control to
+            // prefer, the Calculator window sent the planner back to "open Calculator", over and
+            // over.
+            guard !Self.containerRoles.contains(element.role) else { continue }
             if let label = element.bestLabel {
                 candidates.append(Mention(reference: element.id, label: label, kind: .control))
             }
@@ -67,8 +76,15 @@ public struct GoalAnalysis: Sendable, Equatable {
         mentions =
             candidates
             .filter { Self.goal(normalizedGoal, mentions: $0.label) }
-            // Longer names are more specific: "New Folder" is better evidence than "Folder".
-            .sorted { Self.normalize($0.label).count > Self.normalize($1.label).count }
+            .sorted { left, right in
+                // In the order the goal mentions them, so the list reads as the order to work in:
+                // listed by specificity instead, the planner did the last part of "work it out,
+                // then copy the result" first. Ties go to the more specific name.
+                let leftPosition = Self.position(of: left.label, in: normalizedGoal)
+                let rightPosition = Self.position(of: right.label, in: normalizedGoal)
+                if leftPosition != rightPosition { return leftPosition < rightPosition }
+                return Self.normalize(left.label).count > Self.normalize(right.label).count
+            }
             .filter { seen.insert($0.reference).inserted }
             .prefix(Self.maximumMentions)
             .map { $0 }
@@ -85,6 +101,13 @@ public struct GoalAnalysis: Sendable, Equatable {
         } else {
             applicationToOpen = nil
         }
+    }
+
+    /// Where in the goal a label is first mentioned.
+    static func position(of label: String, in normalizedGoal: String) -> Int {
+        let phrase = normalize(label)
+        guard let range = " \(normalizedGoal) ".range(of: " \(phrase) ") else { return .max }
+        return " \(normalizedGoal) ".distance(from: normalizedGoal.startIndex, to: range.lowerBound)
     }
 
     /// Whether a label appears in the goal as a whole phrase.
@@ -205,7 +228,9 @@ public struct GoalAnalysis: Sendable, Equatable {
             lines.append("")
         }
         if !mentions.isEmpty {
-            lines.append("NAMED IN THE GOAL (the goal refers to these; prefer them):")
+            lines.append(
+                "NAMED IN THE GOAL, in the order the goal mentions them (prefer these; do the first one that is still outstanding):"
+            )
             for mention in mentions {
                 let reference = mention.kind == .menuCommand ? mention.reference : "[\(mention.reference)]"
                 lines.append("  \(reference) \(mention.kind.rawValue) \u{201C}\(mention.label)\u{201D}")

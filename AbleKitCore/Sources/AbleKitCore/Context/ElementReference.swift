@@ -96,9 +96,14 @@ public struct ElementReference: Sendable, Equatable, Codable, Identifiable {
     /// makes the genuinely actionable elements harder to find.
     public var isInteresting: Bool {
         guard frame.width > 0, frame.height > 0 else { return false }
-        if !actions.isEmpty { return true }
+        // A text field needs no name: it is identified by being the field.
         if isTextInput { return true }
-        return Self.interestingRoles.contains(role) && bestLabel != nil
+        // Everything else must have a name. An unnamed control cannot be described to the planner,
+        // so choosing it is guesswork — and the planner did guess, pressing "untitled" buttons in
+        // Calculator while the numbered ones sat in the list.
+        guard bestLabel != nil else { return false }
+        if !actions.isEmpty { return true }
+        return Self.interestingRoles.contains(role)
     }
 
     private static let interestingRoles: Set<String> = [

@@ -63,7 +63,9 @@ public struct ContextCollectionOptions: Sendable, Equatable {
         includesAccessibility: true,
         includesScreenshot: false,
         includesScreenText: false,
-        includesUserContent: false,
+        // The clipboard is read: it is how "copy the result" is checked, and reading it costs
+        // nothing.
+        includesUserContent: true,
         includesMenus: false,
         maximumElements: 120,
         maximumDepth: 8
